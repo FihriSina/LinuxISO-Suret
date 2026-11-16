@@ -4,22 +4,24 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.2.9
+## Current milestone: v0.3.0
 
 The current implementation targets **KDE Plasma** and contains the capture, verification, restore, application-catalog and experimental ISO-project generation layers.
 
-### v0.2.9: portability gate + active KWin plugins + widget runtime hints
+### v0.3.0: first bootable-ISO build pipeline
 
-The scanner/verification layer is now at its pre-v0.3 freeze point. v0.2.9 adds a target-oriented portability report, reduces KWin capture to enabled user plugins, and records Plasma widget runtime hints.
+The profile scanner is frozen for the first ISO cycle. v0.3.0 moves the project into image-building and live-session validation.
 
-- `linux-iso portability PROFILE --recipe ubuntu-26.04-kde` reports READY / READY WITH WARNINGS / BLOCKED
-- active user KWin scripts/effects are detected from `[Plugins] <pluginId>Enabled=true` in `kwinrc`; installed-but-disabled user plugins are omitted from active profiles
-- bundled Plasma widgets record `X-Plasma-API-Minimum-Version`, KPackage type and QML imports
-- non-Qt/KDE QML imports are reported as portability warnings rather than silently ignored
-- active-only icon inheritance, widgets, themes, terminal settings and one-off custom assets remain preserved
-- `stage-iso` writes `PORTABILITY.txt` and refuses profiles with portability blockers
-- `verify` remains the integrity gate; portability is the target-recipe readiness gate
-- branding remains **Linux ISO - Suret**, with repo/package/CLI name `linux-iso`
+- `linux-iso build-doctor` checks Podman, KIWI, QEMU, KVM access and free disk space
+- Pardus and other unvalidated direct-build hosts prefer KIWI boxbuild isolation
+- `linux-iso build-iso PROFILE` stages and executes the KIWI build
+- generated `build.sh` supports standalone `kiwi-boxbuild`, core `kiwi-ng system boxbuild`, and direct `kiwi-ng system build`
+- direct builds run `kiwi-ng image info --resolve-package-list` before creating the ISO
+- the ISO recipe creates an ephemeral `live` user, SDDM autologin and an installer desktop launcher
+- the captured Suret profile is applied to the live KDE session as well as to the final Calamares-created user
+- generated `test-qemu.sh` boots the resulting ISO with KVM when available and TCG fallback otherwise
+- widget minimum Plasma API is checked against the recipe target (Ubuntu 26.04 recipe currently targets Plasma 6.6)
+- the Calamares patch helper no longer imports the development-only `linux_iso` Python package inside the image
 
 ### Existing audit-driven fixes
 
@@ -135,22 +137,19 @@ uv run linux-iso restore ~/linux-iso-profile --target-home /home/testuser --appl
 uv run linux-iso catalog ~/linux-iso-profile -o application-catalog.json
 ```
 
-## 5. Stage the experimental ISO build project
+## 5. Build the first experimental ISO
 
 First recipe: **Ubuntu 26.04 LTS + KDE Plasma/Kubuntu + Calamares**.
 
 ```bash
+uv run linux-iso build-doctor
 uv run linux-iso stage-iso ~/linux-iso-profile -o ~/linux-iso-build
+uv run linux-iso build-iso ~/linux-iso-profile -o ~/linux-iso-build --backend auto
 ```
 
-`stage-iso` runs profile verification first. If verification fails, ISO staging stops instead of embedding a known-broken profile.
+`stage-iso` remains available for inspection-only workflows. `build-iso` stages the same project and then selects boxbuild or direct KIWI according to the host tools. The staged project also contains `build.sh` and `test-qemu.sh`.
 
-The staged tree includes KIWI config, profile payload, Calamares modules and first-boot retry logic. On a KIWI NG build host:
-
-```bash
-cd ~/linux-iso-build
-./build.sh
-```
+For the first end-to-end attempt, `./scripts/first-iso.sh` runs tests, verification, portability, host diagnostics and staging; if the host is ready it starts the ISO build automatically.
 
 The build recipe remains **experimental until a generated ISO passes QEMU/KVM live boot and Calamares installation validation**.
 
@@ -173,7 +172,7 @@ Clean base system
 
 ## Supported scope
 
-| Area | v0.2.9 |
+| Area | v0.3.0 |
 |---|---|
 | KDE Plasma capture | Yes |
 | active-only appearance capture | Yes |
@@ -189,7 +188,8 @@ Clean base system
 | categorized installer catalog | Yes |
 | Ubuntu 26.04 KDE KIWI recipe | Experimental |
 | Calamares integration | Experimental |
-| QEMU boot/install validation | Pending |
+| Live-user + QEMU helper generation | Yes |
+| QEMU boot/install validation | Pending real-system run |
 | GNOME/Cinnamon/XFCE | Not yet |
 | Arch/Fedora/openSUSE image recipes | Not yet |
 
@@ -199,7 +199,7 @@ Cross-family native package translation is intentionally blocked. A Pacman profi
 
 A source Plasma desktop with customized panels, third-party plasmoids, manually downloaded icons, a custom wallpaper, cursor/theme/font set, KWin additions and a styled terminal must install into a clean VM without manual desktop reconstruction. Optional applications should appear only when selected during installation.
 
-## Development environment diagnostics (v0.2.9)
+## Development environment diagnostics (v0.3.0)
 
 `uv` manages the project environment. The project explicitly enables the `dev`
 dependency group, which contains pytest.

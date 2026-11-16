@@ -49,6 +49,18 @@ def _manifest(profile: Path) -> dict[str, Any]:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
+def _version_tuple(value: str | None) -> tuple[int, ...]:
+    if not value:
+        return ()
+    parts = []
+    for token in str(value).split("."):
+        digits = "".join(ch for ch in token if ch.isdigit())
+        if not digits:
+            break
+        parts.append(int(digits))
+    return tuple(parts)
+
+
 def portability_report(profile: Path, recipe_id: str = "ubuntu-26.04-kde") -> PortabilityResult:
     # Lazy import avoids coupling profile capture/verification to the image builder.
     from linux_iso.builder.kiwi import RECIPES
@@ -68,6 +80,8 @@ def portability_report(profile: Path, recipe_id: str = "ubuntu-26.04-kde") -> Po
     distro = source.get("distro_name") or source.get("distro_id") or "unknown"
     arch = source.get("architecture") or "unknown"
     checks.append(f"Source system: {distro} ({arch})")
+    if recipe.target_plasma_version:
+        checks.append(f"Target Plasma: {recipe.target_plasma_version}")
     checks.append(
         "Profile verification: "
         + ("PASS WITH WARNINGS" if verification.ok and verification.warnings else "PASS" if verification.ok else "FAIL")
@@ -105,6 +119,11 @@ def portability_report(profile: Path, recipe_id: str = "ubuntu-26.04-kde") -> Po
         minimum = widget.get("plasma_api_minimum_version")
         if minimum:
             checks.append(f"Widget {widget.get('id')} declares Plasma API minimum {minimum}")
+            target = recipe.target_plasma_version
+            if target and _version_tuple(minimum) > _version_tuple(target):
+                blockers.append(
+                    f"Widget {widget.get('id')} requires Plasma {minimum}+, but recipe {recipe_id} targets Plasma {target}."
+                )
 
     components = desktop.get("component_details", [])
     local_kwin = [
@@ -118,8 +137,8 @@ def portability_report(profile: Path, recipe_id: str = "ubuntu-26.04-kde") -> Po
     required = [item for item in packages if item.get("required_for_appearance")]
     checks.append(f"Required appearance packages: {len(required)}")
     checks.append(
-        "Target repository package existence will be validated during KIWI build; "
-        "v0.2.9 does not claim cross-release package-name equivalence."
+        "Target repository package existence is resolved by KIWI before/directly during the v0.3 build; "
+        "cross-release package-name equivalence is still not guessed automatically."
     )
 
     return PortabilityResult(

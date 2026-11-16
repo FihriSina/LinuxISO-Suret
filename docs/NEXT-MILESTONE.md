@@ -1,11 +1,11 @@
-# Next milestone - v0.3 ISO validation and fidelity
+# Next milestone - v0.3.0 first ISO build and VM validation
 
 ## Highest priority: prove the ISO
 
 1. Run `linux-iso verify` on a real active-only KDE profile.
-2. Stage the Ubuntu 26.04 KDE KIWI project.
-3. Build the ISO with KIWI NG on a supported Linux build host.
-4. Boot it in QEMU/KVM.
+2. Run `linux-iso build-doctor` and select boxbuild/direct backend.
+3. Run `linux-iso build-iso` for the Ubuntu 26.04 KDE recipe.
+4. Boot the resulting ISO with generated `test-qemu.sh`.
 5. Install with Calamares to a disposable virtual disk.
 6. Boot the installed system.
 7. Compare source and installed Plasma state.

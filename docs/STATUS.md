@@ -1,5 +1,17 @@
 # Development status
 
+## v0.3.0 implemented
+
+- first executable KIWI ISO build pipeline (`build-doctor`, `build-iso`, staged `build.sh`)
+- Pardus/unvalidated hosts prefer boxbuild; direct KIWI remains a fallback
+- standalone `kiwi-boxbuild` and core `kiwi-ng system boxbuild` are supported
+- live user creation, SDDM autologin and desktop Calamares launcher are generated
+- captured profile is applied to the live KDE session during KIWI configuration
+- direct KIWI builds resolve the package list before image creation
+- `test-qemu.sh` boots a generated ISO with KVM or TCG fallback
+- recipe-level target Plasma compatibility check for bundled widgets
+- Calamares patch helper is self-contained inside the image
+
 ## v0.2.9 implemented
 
 - visible product branding: **Linux ISO - Suret**; repository/package/CLI: `linux-iso`
@@ -30,7 +42,7 @@
 - Calamares installation into a disposable virtual disk
 - post-install Plasma fidelity comparison
 
-Those are the v0.3 acceptance gates.
+Those are now the active v0.3.0 real-system acceptance gates.
 
 
 ## v0.2.7 environment hardening

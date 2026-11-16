@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +12,6 @@ import yaml
 from linux_iso import __version__
 from linux_iso.branding import PRODUCT_NAME
 from linux_iso.verification import verify_profile
-
 from linux_iso.builder.calamares import generate_calamares_overlay
 
 
@@ -35,6 +35,8 @@ class BaseRecipe:
     repositories: tuple[AptRepository, ...]
     bootstrap_packages: tuple[str, ...]
     image_packages: tuple[str, ...]
+    target_plasma_version: str | None = None
+    preferred_box: str = "ubuntu"
 
 
 UBUNTU_2604_KDE = BaseRecipe(
@@ -80,7 +82,10 @@ UBUNTU_2604_KDE = BaseRecipe(
         "python3",
         "sudo",
         "network-manager",
+        "sddm",
     ),
+    target_plasma_version="6.6",
+    preferred_box="ubuntu",
 )
 
 RECIPES = {UBUNTU_2604_KDE.id: UBUNTU_2604_KDE}
@@ -93,7 +98,6 @@ from pathlib import Path
 
 import yaml
 
-from linux_iso import __version__
 SETTINGS = Path("/etc/calamares/settings.conf")
 FRAGMENT = Path("/etc/calamares/linux-iso-settings-fragment.yaml")
 
@@ -151,12 +155,61 @@ if __name__ == "__main__":
 '''
 
 
+LIVE_PROFILE_SCRIPT = r'''#!/usr/bin/env python3
+from __future__ import annotations
+
+import os
+import shutil
+from pathlib import Path
+
+PAYLOAD = Path("/usr/share/linux-iso/profile/payload/home")
+TARGET = Path("/home/live")
+
+
+def ids():
+    for line in Path("/etc/passwd").read_text(encoding="utf-8", errors="replace").splitlines():
+        fields = line.split(":")
+        if len(fields) >= 4 and fields[0] == "live":
+            return int(fields[2]), int(fields[3])
+    raise RuntimeError("live user is missing")
+
+
+def main():
+    if not PAYLOAD.is_dir():
+        raise SystemExit("Linux ISO profile payload is missing")
+    TARGET.mkdir(parents=True, exist_ok=True)
+    uid, gid = ids()
+    for src in PAYLOAD.rglob("*"):
+        rel = src.relative_to(PAYLOAD)
+        dst = TARGET / rel
+        if src.is_dir():
+            dst.mkdir(parents=True, exist_ok=True)
+            os.chown(dst, uid, gid)
+            continue
+        if not src.is_file():
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            text = src.read_text(encoding="utf-8", errors="strict")
+        except (UnicodeDecodeError, OSError):
+            shutil.copy2(src, dst)
+        else:
+            dst.write_text(text.replace("{{HOME}}", "/home/live"), encoding="utf-8")
+            shutil.copymode(src, dst)
+        os.chown(dst, uid, gid)
+    os.chown(TARGET, uid, gid)
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
 def _read_manifest(profile: Path) -> dict[str, Any]:
     path = profile / "manifest.yaml"
     if not path.is_file():
         raise BuilderError(f"Missing profile manifest: {path}")
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-
 
 
 def _validate_recipe_compatibility(manifest: dict[str, Any], recipe: BaseRecipe) -> None:
@@ -225,6 +278,21 @@ def _write_config_xml(destination: Path, recipe: BaseRecipe, manifest: dict[str,
         },
     )
 
+    users = ET.SubElement(root, "users")
+    ET.SubElement(
+        users,
+        "user",
+        {
+            "name": "live",
+            "password": "live",
+            "pwdformat": "plain",
+            "home": "/home/live",
+            "groups": "users,sudo,audio,video,plugdev,netdev",
+            "realname": "Linux ISO - Suret Live",
+            "shell": "/bin/bash",
+        },
+    )
+
     for repo in recipe.repositories:
         node = ET.SubElement(
             root,
@@ -254,18 +322,62 @@ def _write_config_xml(destination: Path, recipe: BaseRecipe, manifest: dict[str,
     ET.ElementTree(root).write(destination, encoding="utf-8", xml_declaration=True)
 
 
-def _write_build_scripts(destination: Path) -> None:
+def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
     patcher = destination / "root/usr/lib/linux-iso/patch-calamares.py"
     patcher.parent.mkdir(parents=True, exist_ok=True)
     patcher.write_text(PATCH_CALAMARES, encoding="utf-8")
     patcher.chmod(0o755)
+
+    live_profile = destination / "root/usr/lib/linux-iso/apply-live-profile.py"
+    live_profile.write_text(LIVE_PROFILE_SCRIPT, encoding="utf-8")
+    live_profile.chmod(0o755)
+
+    installer = destination / "root/usr/bin/linux-iso-installer"
+    installer.parent.mkdir(parents=True, exist_ok=True)
+    installer.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "if command -v calamares-launch-normal >/dev/null 2>&1; then\n"
+        "  exec sudo -E calamares-launch-normal\n"
+        "fi\n"
+        "exec sudo -E calamares\n",
+        encoding="utf-8",
+    )
+    installer.chmod(0o755)
 
     config_sh = destination / "config.sh"
     config_sh.write_text(
         "#!/bin/bash\n"
         "set -e\n"
         "test -f /.kconfig && . /.kconfig\n"
-        "python3 /usr/lib/linux-iso/patch-calamares.py\n",
+        "python3 /usr/lib/linux-iso/patch-calamares.py\n"
+        "python3 /usr/lib/linux-iso/apply-live-profile.py\n"
+        "install -d -m 0755 /etc/sddm.conf.d\n"
+        "cat > /etc/sddm.conf.d/99-linux-iso-live.conf <<'EOF'\n"
+        "[Autologin]\n"
+        "User=live\n"
+        "Session=plasma\n"
+        "Relogin=true\n"
+        "EOF\n"
+        "install -d -m 0755 /etc/sudoers.d\n"
+        "echo 'live ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/99-linux-iso-live\n"
+        "chmod 0440 /etc/sudoers.d/99-linux-iso-live\n"
+        "install -d -o live -g users -m 0755 /home/live/Desktop\n"
+        "cat > /home/live/Desktop/linux-iso-installer.desktop <<'EOF'\n"
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Install Linux ISO - Suret\n"
+        "Comment=Install this personalized Linux system\n"
+        "Exec=linux-iso-installer\n"
+        "Icon=system-software-install\n"
+        "Terminal=false\n"
+        "Categories=System;\n"
+        "EOF\n"
+        "chmod 0755 /home/live/Desktop/linux-iso-installer.desktop\n"
+        "chown -R live:users /home/live\n"
+        "command -v baseSetRunlevel >/dev/null 2>&1 && baseSetRunlevel 5 || true\n"
+        "command -v baseService >/dev/null 2>&1 && baseService sddm on || true\n"
+        "command -v baseService >/dev/null 2>&1 && baseService NetworkManager on || true\n",
         encoding="utf-8",
     )
     config_sh.chmod(0o755)
@@ -274,11 +386,87 @@ def _write_build_scripts(destination: Path) -> None:
     build_sh.write_text(
         "#!/bin/sh\n"
         "set -eu\n"
-        "OUT=${1:-./build-result}\n"
-        "sudo kiwi-ng system build --description . --target-dir \"$OUT\"\n",
+        "HERE=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
+        "OUT=${1:-$HERE/build-result}\n"
+        "BACKEND=${LINUX_ISO_BUILD_BACKEND:-auto}\n"
+        "mkdir -p \"$OUT\"\n"
+        "if [ \"$BACKEND\" = auto ]; then\n"
+        "  if command -v kiwi-boxbuild >/dev/null 2>&1 && command -v podman >/dev/null 2>&1; then BACKEND=boxbuild;\n"
+        "  elif command -v kiwi-ng >/dev/null 2>&1 && command -v podman >/dev/null 2>&1 && { command -v qemu-system-x86_64 >/dev/null 2>&1 || command -v qemu-kvm >/dev/null 2>&1; }; then BACKEND=boxbuild;\n"
+        "  elif command -v kiwi-ng >/dev/null 2>&1; then BACKEND=direct;\n"
+        "  else echo 'No KIWI backend found. Run: linux-iso build-doctor' >&2; exit 2; fi\n"
+        "fi\n"
+        "echo \"Linux ISO - Suret build backend: $BACKEND\"\n"
+        "if [ \"$BACKEND\" = boxbuild ]; then\n"
+        f"  if command -v kiwi-boxbuild >/dev/null 2>&1; then exec kiwi-boxbuild --box {recipe.preferred_box} kiwi --description \"$HERE\" --target-dir \"$OUT\"; fi\n"
+        f"  if command -v kiwi-ng >/dev/null 2>&1; then exec kiwi-ng system boxbuild --box {recipe.preferred_box} kiwi --description \"$HERE\" --target-dir \"$OUT\"; fi\n"
+        "  echo 'boxbuild backend requested but neither kiwi-boxbuild nor kiwi-ng is available' >&2; exit 2\n"
+        "fi\n"
+        "if [ \"$BACKEND\" = direct ]; then\n"
+        "  kiwi-ng image info --description \"$HERE\" --resolve-package-list > \"$OUT/package-resolution.txt\"\n"
+        "  KIWI=$(command -v kiwi-ng)\n"
+        "  exec sudo \"$KIWI\" system build --description \"$HERE\" --target-dir \"$OUT\"\n"
+        "fi\n"
+        "echo \"Unknown backend: $BACKEND\" >&2\n"
+        "exit 2\n",
         encoding="utf-8",
     )
     build_sh.chmod(0o755)
+
+    qemu_sh = destination / "test-qemu.sh"
+    qemu_sh.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "HERE=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
+        "RESULT=${1:-$HERE/build-result}\n"
+        "ISO=$(find \"$RESULT\" -maxdepth 2 -type f -name '*.iso' -print | sort | tail -n 1)\n"
+        "if [ -z \"${ISO:-}\" ]; then echo \"No ISO found under $RESULT\" >&2; exit 2; fi\n"
+        "QEMU=$(command -v qemu-system-x86_64 || command -v qemu-kvm || true)\n"
+        "if [ -z \"$QEMU\" ]; then echo 'qemu-system-x86_64 not found' >&2; exit 2; fi\n"
+        "ACCEL='-accel tcg'\n"
+        "if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then ACCEL='-enable-kvm -cpu host'; fi\n"
+        "echo \"Booting: $ISO\"\n"
+        "exec $QEMU $ACCEL -m ${LINUX_ISO_QEMU_MEMORY:-6144} -smp ${LINUX_ISO_QEMU_CPUS:-4} "
+        "-boot d -cdrom \"$ISO\" -device virtio-vga -display gtk\n",
+        encoding="utf-8",
+    )
+    qemu_sh.chmod(0o755)
+
+
+def _select_backend(requested: str = "auto") -> str:
+    if requested not in {"auto", "boxbuild", "direct"}:
+        raise BuilderError(f"Unknown build backend: {requested}")
+    if requested == "boxbuild":
+        standalone = shutil.which("kiwi-boxbuild") is not None
+        core = shutil.which("kiwi-ng") is not None and (shutil.which("qemu-system-x86_64") is not None or shutil.which("qemu-kvm") is not None)
+        if shutil.which("podman") is None:
+            raise BuilderError("podman is required for boxbuild")
+        if not standalone and not core:
+            raise BuilderError("boxbuild requires kiwi-boxbuild, or kiwi-ng plus QEMU")
+        return "boxbuild"
+    if requested == "direct":
+        if shutil.which("kiwi-ng") is None:
+            raise BuilderError("kiwi-ng is not installed")
+        return "direct"
+    if shutil.which("podman") and (
+        shutil.which("kiwi-boxbuild")
+        or (shutil.which("kiwi-ng") and (shutil.which("qemu-system-x86_64") or shutil.which("qemu-kvm")))
+    ):
+        return "boxbuild"
+    if shutil.which("kiwi-ng"):
+        return "direct"
+    raise BuilderError("No KIWI backend found; run 'linux-iso build-doctor' for details")
+
+
+def run_kiwi_build(project: Path, backend: str = "auto") -> int:
+    project = project.expanduser().resolve()
+    if not (project / "config.xml").is_file():
+        raise BuilderError(f"Not a staged KIWI project: {project}")
+    selected = _select_backend(backend)
+    env = dict(**__import__("os").environ)
+    env["LINUX_ISO_BUILD_BACKEND"] = selected
+    proc = subprocess.run([str(project / "build.sh")], cwd=project, env=env, check=False)
+    return proc.returncode
 
 
 def generate_kiwi_project(
@@ -309,7 +497,7 @@ def generate_kiwi_project(
     shutil.copytree(profile, share_profile)
 
     generate_calamares_overlay(profile, overlay)
-    _write_build_scripts(destination)
+    _write_build_scripts(destination, recipe)
     _write_config_xml(destination / "config.xml", recipe, manifest)
 
     from linux_iso.portability import portability_report
@@ -324,14 +512,17 @@ def generate_kiwi_project(
     marker.write_text(
         f"{PRODUCT_NAME} v{__version__} KIWI project\n"
         f"Recipe: {recipe.id}\n"
+        f"Target Plasma: {recipe.target_plasma_version or 'unknown'}\n"
         f"Appearance packages embedded in base image: {len(required)}\n"
-        "Run ./build.sh on a KIWI NG build host.\n"
-        "The generated recipe is experimental until boot/install validation in QEMU succeeds.\n",
+        "Live user: live (ephemeral media only)\n"
+        "The captured profile is applied to the live session and again to the user created by Calamares.\n"
+        "Run ./build.sh to build, then ./test-qemu.sh to boot the generated ISO.\n"
+        "The generated recipe remains experimental until boot/install validation in QEMU succeeds.\n",
         encoding="utf-8",
     )
     return destination
 
 
 def generate_kiwi_overlay(profile: Path, destination: Path) -> Path:
-    """Backward-compatible name; v0.2 now stages a full KIWI project."""
+    """Backward-compatible name; v0.2+ stages a full KIWI project."""
     return generate_kiwi_project(profile, destination)

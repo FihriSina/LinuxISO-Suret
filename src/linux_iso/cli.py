@@ -5,7 +5,8 @@ import sys
 from pathlib import Path
 
 from linux_iso.branding import PRODUCT_NAME
-from linux_iso.builder.kiwi import BuilderError, RECIPES, generate_kiwi_project
+from linux_iso.builder.kiwi import BuilderError, RECIPES, generate_kiwi_project, run_kiwi_build
+from linux_iso.buildenv import build_host_report
 from linux_iso.capture import CaptureError, capture_profile
 from linux_iso.diagnostics import doctor_report
 from linux_iso.installer.catalog import write_catalog
@@ -60,8 +61,16 @@ def build_parser() -> argparse.ArgumentParser:
     kiwi.add_argument("-o", "--output", type=Path, default=Path("./linux-iso-build"))
     kiwi.add_argument("--recipe", choices=sorted(RECIPES), default="ubuntu-26.04-kde")
 
+
+    build_iso = sub.add_parser("build-iso", help="Stage and execute the first KIWI ISO build")
+    build_iso.add_argument("profile", type=Path)
+    build_iso.add_argument("-o", "--output", type=Path, default=Path("./linux-iso-build"))
+    build_iso.add_argument("--recipe", choices=sorted(RECIPES), default="ubuntu-26.04-kde")
+    build_iso.add_argument("--backend", choices=("auto", "boxbuild", "direct"), default="auto")
+
     sub.add_parser("recipes", help="List available base ISO recipes")
     sub.add_parser("doctor", help="Diagnose the local Python/uv development environment")
+    sub.add_parser("build-doctor", help="Diagnose KIWI/QEMU build host readiness")
     return parser
 
 
@@ -114,6 +123,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ISO build project staged: {path.resolve()}")
             print(f"Build command: cd {path.resolve()} && ./build.sh")
             return 0
+        if args.command == "build-iso":
+            path = generate_kiwi_project(args.profile, args.output, recipe_id=args.recipe)
+            print(f"ISO build project staged: {path.resolve()}")
+            print(f"Starting KIWI build with backend: {args.backend}")
+            return run_kiwi_build(path, backend=args.backend)
         if args.command == "recipes":
             for recipe_id in sorted(RECIPES):
                 print(recipe_id)
@@ -121,6 +135,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "doctor":
             print(doctor_report())
             return 0
+        if args.command == "build-doctor":
+            report = build_host_report()
+            print(report.render())
+            return 0 if report.ready else 5
     except (CaptureError, RestoreError, BuilderError, FileNotFoundError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
