@@ -207,7 +207,7 @@ def _write_config_xml(destination: Path, recipe: BaseRecipe, manifest: dict[str,
     ET.SubElement(description, "specification").text = f"{PRODUCT_NAME} personalized KDE Plasma live image"
 
     preferences = ET.SubElement(root, "preferences")
-    ET.SubElement(preferences, "version").text = "0.2.5"
+    ET.SubElement(preferences, "version").text = "0.2.7"
     ET.SubElement(preferences, "packagemanager").text = "apt"
     ET.SubElement(preferences, "locale").text = "en_US"
     ET.SubElement(preferences, "timezone").text = "UTC"
@@ -313,7 +313,7 @@ def generate_kiwi_project(
     required = _required_base_packages(manifest)
     marker = destination / "README-BUILDER.txt"
     marker.write_text(
-        f"{PRODUCT_NAME} v0.2.6 KIWI project\n"
+        f"{PRODUCT_NAME} v0.2.7 KIWI project\n"
         f"Recipe: {recipe.id}\n"
         f"Appearance packages embedded in base image: {len(required)}\n"
         "Run ./build.sh on a KIWI NG build host.\n"

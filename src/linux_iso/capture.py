@@ -303,7 +303,7 @@ def capture_profile(
 
     desktop_name, desktop_version = detect_desktop()
     if desktop_name != "kde-plasma":
-        raise CaptureError(f"v0.2.5 currently supports KDE Plasma; detected: {desktop_name}")
+        raise CaptureError(f"v0.2.7 currently supports KDE Plasma; detected: {desktop_name}")
 
     if output.exists():
         shutil.rmtree(output)
@@ -330,7 +330,7 @@ def capture_profile(
     local_plasmoids = user_plasmoids(home)
     active_components = _expanded_active_components(home)
 
-    # v0.2.5 defaults to active-only capture. Full mode is retained for diagnostics
+    # v0.2.7 defaults to active-only capture. Full mode is retained for diagnostics
     # and backwards-compatible "capture everything installed" behaviour.
     reference_roots: list[Path] = list(configs + terminal_paths)
     if asset_mode == "all":
@@ -515,7 +515,7 @@ def capture_profile(
         "notes": [
             "Known key/credential stores are not captured.",
             "Possible secrets in shell startup files are redacted.",
-            "Files larger than 64 MiB are excluded from profile payload in v0.2.5.",
+            "Files larger than 64 MiB are excluded from profile payload in v0.2.7.",
         ],
     }
 

@@ -31,3 +31,10 @@
 - post-install Plasma fidelity comparison
 
 Those are the v0.3 acceptance gates.
+
+
+## v0.2.7 environment hardening
+
+- Tests run with `uv run --dev python -m pytest -q` rather than depending on the generated `pytest` console script.
+- `linux-iso doctor` distinguishes an importable pytest module from a missing console entry point.
+- `scripts/repair-env.sh` recreates the project `.venv` deterministically.

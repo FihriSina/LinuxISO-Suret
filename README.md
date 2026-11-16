@@ -4,11 +4,11 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.2.5
+## Current milestone: v0.2.7
 
 The current implementation targets **KDE Plasma** and contains the capture, verification, restore, application-catalog and experimental ISO-project generation layers.
 
-### v0.2.5: active-only capture + verification
+### v0.2.7: active-only capture + verification + uv environment hardening
 
 - default capture mode is now `active`: installed-but-unused theme collections are not copied wholesale
 - `--asset-mode all` retains the old diagnostic/full user-asset capture behavior
@@ -173,7 +173,7 @@ Clean base system
 
 ## Supported scope
 
-| Area | v0.2.5 |
+| Area | v0.2.7 |
 |---|---|
 | KDE Plasma capture | Yes |
 | active-only appearance capture | Yes |
@@ -199,7 +199,7 @@ Cross-family native package translation is intentionally blocked. A Pacman profi
 
 A source Plasma desktop with customized panels, third-party plasmoids, manually downloaded icons, a custom wallpaper, cursor/theme/font set, KWin additions and a styled terminal must install into a clean VM without manual desktop reconstruction. Optional applications should appear only when selected during installation.
 
-## Development environment diagnostics (v0.2.6)
+## Development environment diagnostics (v0.2.7)
 
 `uv` manages the project environment. The project explicitly enables the `dev`
 dependency group, which contains pytest.
@@ -207,7 +207,7 @@ dependency group, which contains pytest.
 ```bash
 uv sync --dev
 uv run linux-iso doctor
-uv run --dev pytest -q
+uv run --dev python -m pytest -q
 ```
 
 For a reproducible local test command, use:
@@ -216,5 +216,4 @@ For a reproducible local test command, use:
 ./scripts/test.sh
 ```
 
-The helper clears `UV_NO_DEV` and `UV_NO_DEFAULT_GROUPS` for the test process,
-then explicitly syncs and runs the development dependency group.
+The helper clears uv group-suppression flags, explicitly syncs the development dependency group, and runs pytest through `python -m pytest` so testing does not depend on a generated console-entrypoint file. If the project `.venv` becomes stale or partially damaged, run `./scripts/repair-env.sh`.
