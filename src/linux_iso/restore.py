@@ -37,5 +37,6 @@ def restore_profile(profile: Path, target_home: Path, apply: bool = False) -> li
             shutil.copy2(src, dst)
         else:
             dst.write_text(text.replace(placeholder, str(target_home)), encoding="utf-8")
+            shutil.copymode(src, dst)
 
     return operations

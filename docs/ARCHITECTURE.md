@@ -1,76 +1,104 @@
-# Architecture
+# Linux ISO — Nakş architecture
 
-MyDistro is intentionally split into two artifacts:
+Linux ISO deliberately separates **personalization state** from **hardware/system identity**.
 
-1. **Portable personalization profile** — deterministic capture of the user's desktop experience.
-2. **Distro-specific installer image** — a clean Live ISO that consumes the profile and installs selected applications online.
-
-This avoids cloning hardware-specific state from a running machine into a new machine.
-
-## Capture pipeline
+## Main pipeline
 
 ```text
-Source Linux
-   |
-   +-- System detector
-   +-- Desktop adapter (v0.1: KDE Plasma)
-   +-- Package inventory
-   +-- Custom asset collector
-   +-- Security sanitizer
-   |
-   v
-manifest.yaml + payload/home/
+Running KDE Plasma system
+          │
+          ▼
+      Capture Core
+          │
+   ┌──────┼──────────┐
+   ▼      ▼          ▼
+ KDE    Package    Security
+Adapter Inventory  Sanitizer
+   │      │          │
+   └──────┼──────────┘
+          ▼
+  Portable Profile
+ manifest.yaml + payload/home
+          │
+          ▼
+  Distro Build Adapter
+          │
+   ┌──────┴─────────┐
+   ▼                ▼
+ KIWI NG          Calamares
+ recipe           integration
+   │                │
+   └──────┬─────────┘
+          ▼
+      Live ISO
 ```
 
-### KDE adapter
+## 1. Portable profile
 
-The KDE adapter owns knowledge of Plasma/KDE locations and semantics. It captures the native Plasma configuration so panel geometry, applet order and applet configuration are preserved. It also captures user-local Plasma packages, themes, icons, wallpapers, fonts, Konsole profiles and `.desktop` overrides.
+The profile is the canonical artifact. It contains the native desktop configuration and all portable assets required to reconstruct the user's experience. It does **not** contain a raw copy of `/`, hardware IDs or disk UUID state.
 
-A generic asset pass then searches captured text configuration for direct references to image/font/sound files inside the source user's home directory. This catches one-off files such as `~/Pictures/icons/my-launcher.svg` that are not part of a formal icon theme.
+All source-home paths are normalized to `{{HOME}}`; manifest destinations use the same placeholder. This allows a profile captured from `/home/taha` to be applied to `/home/alper` without path surgery by the user.
 
-### Home portability
+## 2. KDE adapter
 
-Absolute source-home paths are rewritten from:
+The KDE adapter captures Plasma and KWin configuration plus user-local data packages. It extracts referenced Plasma plugin IDs from `plasma-org.kde.plasma.desktop-appletsrc`.
 
-```text
-/home/taha/Pictures/icons/foo.svg
-```
+For every referenced widget:
 
-to:
+1. user-local plasmoid -> bundle it;
+2. system widget owned by a distro package -> mark that package `required_for_appearance`;
+3. system widget with no package owner -> bundle the widget into the target user's local plasmoid directory;
+4. missing widget -> report it in the audit so the profile can be reviewed.
 
-```text
-{{HOME}}/Pictures/icons/foo.svg
-```
+Text configuration and QML/metadata inside captured paths are scanned for direct references to user-owned SVG, PNG, wallpaper, font and sound assets. Referenced files are bundled and their absolute source-home paths become `{{HOME}}/...`.
 
-The restore stage replaces `{{HOME}}` with the target user's actual home directory. Manifest source-path metadata uses the same placeholder, so exporting a profile does not expose the source username merely through file paths.
+## 3. Application inventory
 
-## Security boundary
+The manifest retains package-provider identity:
 
-The profile is meant to be shareable. Therefore the default capture set excludes known credential/key locations and never captures browser profiles or personal documents. Shell startup files are useful because they contain aliases, prompt configuration and shell plugins, but suspected secret assignments are redacted before export.
+- APT
+- Pacman
+- DNF
+- Zypper (future full inventory support)
+- Flatpak
+- Snap
 
-This is defense-in-depth, not a proof that arbitrary user configuration contains no secret. Before public distribution, a future release should include a review screen and secret-scanning pass over the finished profile.
+For native packages, `linux-iso` separates **inventory retention** from **installer visibility**. A manual package is shown as an end-user application when it owns a desktop launcher, is a recognized CLI application, belongs to a known app category, or participates in appearance. Other manual/system packages remain in the manifest but do not clutter the chooser.
 
-## Package model
+Flatpak records both its remote name and remote URL. This is necessary because a clean target might not already have the same remote configured.
 
-Applications are not embedded into the ISO by default. The manifest records installable package identifiers and an installer category. The eventual Calamares UI will present categories such as Internet, Development, Multimedia, Gaming and Communication.
+## 4. Appearance dependency policy
 
-Appearance dependencies are a special class. If a package is needed to reproduce the source appearance, it should be preselected and disabling it should warn that visual fidelity may be reduced.
+There are two application classes:
 
-## Future ISO pipeline
+- **required for appearance** — included automatically / cannot be deselected;
+- **optional application** — presented category-by-category during installation.
 
-```text
-Portable profile
-      |
-      v
-Distro builder adapter
-      |
-      +-- KIWI image description / distro repositories
-      +-- profile overlay in /usr/share/mydistro/profile
-      +-- first-login profile applier
-      +-- Calamares application-selection module
-      |
-      v
-Bootable Live ISO
-```
+A package can become appearance-required through package-name heuristics or an explicit component dependency such as a referenced package-owned Plasma widget.
 
-The ISO builder must be distro-aware. A single recipe should not blindly mix Debian/Ubuntu, Arch, Fedora and openSUSE package/repository semantics.
+## 5. Calamares integration
+
+Each non-empty app category becomes a `packagechooserq` instance using `optionalmultiple` + `legacy`. The selection is stored by Calamares in `packagechooser_<instance-id>` GlobalStorage keys.
+
+The generated `linuxiso-install` Python job runs after the target user exists. It:
+
+1. applies `payload/home` to the target user's home;
+2. resolves `{{HOME}}` placeholders;
+3. fixes ownership;
+4. always includes appearance-required items in the install plan;
+5. attempts APT and Flatpak installation in the target environment;
+6. writes failed/deferred items to `/var/lib/linux-iso/pending-apps.json`.
+
+A systemd oneshot service retries pending APT/Flatpak/Snap work after the installed machine reaches network-online.
+
+## 6. KIWI NG adapter
+
+The first recipe targets Ubuntu 26.04 LTS with KDE/Kubuntu. It generates a KIWI ISO description, repository definitions, the root overlay containing the captured profile, Calamares integration and build scripts.
+
+Native package providers are recipe-scoped. The Ubuntu recipe accepts APT-native profiles; it refuses Pacman/DNF/Zypper native package inventories instead of pretending package names are portable across distro families.
+
+## 7. Security boundary
+
+Known credential locations are excluded. Shell-like files have likely secret assignments redacted. Very large files are excluded by default. Browser profiles and personal documents are outside the default capture graph.
+
+The security model is intentionally conservative but not a mathematical guarantee. A public-export workflow should eventually add a second secret scan over the final staged payload and an interactive review UI.

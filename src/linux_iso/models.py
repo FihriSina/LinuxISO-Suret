@@ -11,6 +11,11 @@ class Package:
     category: str = "other"
     required_for_appearance: bool = False
     reason: str | None = None
+    source: str | None = None
+    source_url: str | None = None
+    installer_visible: bool = True
+    visibility_reason: str | None = None
+    install_options: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -31,6 +36,8 @@ class DesktopProfile:
     custom_assets: list[CapturedFile] = field(default_factory=list)
     widgets: list[str] = field(default_factory=list)
     user_plasmoids: list[str] = field(default_factory=list)
+    widget_details: list[dict[str, Any]] = field(default_factory=list)
+    component_details: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass

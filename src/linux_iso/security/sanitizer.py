@@ -38,7 +38,7 @@ def sanitize_shell_text(text: str) -> SanitizeResult:
         match = SECRET_ASSIGNMENT.match(line.rstrip("\r\n"))
         if match:
             newline = "\n" if line.endswith("\n") else ""
-            out.append(f"# mydistro: redacted possible secret: {match.group(1)}{newline}")
+            out.append(f"# linux-iso: redacted possible secret: {match.group(1)}{newline}")
             redacted += 1
         else:
             out.append(line)

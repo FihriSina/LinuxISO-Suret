@@ -1,8 +1,8 @@
 schema_version: 1
 source:
-  distro_id: debian
-  distro_name: Debian GNU/Linux 13
-  distro_version: '13'
+  distro_id: ubuntu
+  distro_name: Ubuntu 26.04 LTS
+  distro_version: '26.04'
 desktop:
   desktop: kde-plasma
   version: plasmashell 6.x
@@ -11,17 +11,32 @@ desktop:
     - com.example.customclock
   user_plasmoids:
     - com.example.customclock
+  widget_details:
+    - id: com.example.customclock
+      source: user-local
+      bundled: true
 packages:
-  - name: firefox-esr
+  - name: qt-style-kvantum
+    provider: apt
+    category: system
+    required_for_appearance: true
+    reason: Provides an appearance component used by the captured desktop.
+    installer_visible: true
+  - name: firefox
     provider: apt
     category: internet
     required_for_appearance: false
-  - name: kvantum
-    provider: apt
-    category: other
-    required_for_appearance: true
-    reason: Package name suggests it participates in desktop appearance.
+    installer_visible: true
+    visibility_reason: Package owns a desktop application launcher.
+  - name: org.videolan.VLC
+    provider: flatpak
+    category: multimedia
+    required_for_appearance: false
+    source: flathub
+    source_url: https://dl.flathub.org/repo/flathub.flatpakrepo
+    installer_visible: true
 restore:
   home_placeholder: '{{HOME}}'
   payload_root: payload/home
   application_install_mode: online-selective
+  profile_version: '0.2'

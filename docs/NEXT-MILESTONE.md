@@ -1,42 +1,62 @@
-# v0.2 / v0.3 implementation target
+# Next milestone — v0.3 validation and fidelity
 
-## v0.2 — fidelity validator
+## Highest priority: prove the ISO
 
-- Add `mydistro audit` to report every captured custom asset and its consumer.
-- Build component -> package dependency graph.
-- Identify referenced Plasma plugin IDs and distinguish:
-  - Plasma built-ins
-  - user-local plasmoids already captured in payload
-  - system-wide third-party plasmoids that must be reinstalled online
-- Preserve safe symlinks and POSIX mode bits.
-- Add profile size report and large-file opt-in.
-- Test capture -> restore inside a disposable Plasma 6 VM.
+The v0.2 code can generate an Ubuntu 26.04 KDE KIWI + Calamares build project. The next milestone is not another abstraction layer; it is a reproducible VM validation loop.
 
-## v0.3 — first installable ISO
+1. Build the staged image with KIWI NG on a supported build host.
+2. Boot the Live ISO with QEMU/KVM using UEFI and BIOS variants where practical.
+3. Run Calamares into a disposable virtual disk.
+4. Verify the installed system boots.
+5. Compare the installed KDE state against the captured profile.
+6. Verify package selection behavior with Internet available and unavailable.
 
-Target one concrete base first: Debian 13 + KDE Plasma or Ubuntu 26.04 + Plasma.
+## Fidelity work
 
-- Generate a KIWI image description for that target.
-- Put the exported profile under `/usr/share/mydistro/profile` in the Live image.
-- Add a target-user restore service that runs after Calamares creates the user.
-- Add a Calamares page for categorized online application selection.
-- Split applications into:
-  - required for appearance
-  - recommended
-  - optional
-- Install online packages into the target root, not the Live session.
-- Validate boot and installation in QEMU/KVM before writing to physical media.
+- add safe symlink preservation for icon/theme/widget trees;
+- detect custom system-wide themes/icons/cursors in `/usr/local/share` and package-unowned `/usr/share` content;
+- produce a component -> asset -> package dependency graph;
+- add AppStream display names/icons to installer applications;
+- improve “installed later” classification using distro baseline/package history when reliable;
+- add a final secret scan over the staged profile;
+- make the audit fail on unresolved referenced Plasma widgets unless explicitly acknowledged.
+
+## Installer UX
+
+- create Linux ISO — Nakş Calamares branding;
+- show one clear page per category or a custom single-page tree if that proves easier to use;
+- show source/provider and download-size estimates;
+- mark required appearance components separately from optional apps;
+- show a warning when installation is offline and defer online selections cleanly.
+
+## Distribution adapters
+
+After the Ubuntu/KDE path passes the VM acceptance test:
+
+1. Debian/APT recipe;
+2. Arch/Pacman recipe;
+3. Fedora/DNF recipe;
+4. openSUSE/Zypper recipe;
+5. package-name translation rules only where explicitly defined.
+
+## Desktop adapters
+
+After Plasma fidelity is stable:
+
+- GNOME: dconf, extensions, shell theme, GTK/icon/cursor assets;
+- Cinnamon;
+- XFCE;
+- optional standalone `.linux-iso` profile import without reinstalling Linux.
 
 ## Acceptance test
 
-Given a source Plasma desktop with:
+A source desktop containing all of the following must install into a clean VM without manual desktop reconstruction:
 
-- two custom panels,
-- third-party plasmoids,
-- a launcher using a manually downloaded SVG icon,
-- a custom wallpaper,
-- a cursor/icon/theme set,
-- a Konsole profile,
-- Starship/Zsh styling,
-
-then a clean VM installed from the generated ISO should open into the same layout without manually adding panels, widgets, themes or icons. Optional applications should only be installed if selected in the installer.
+- two customized Plasma panels;
+- third-party widgets;
+- a widget or launcher using a manually downloaded SVG/PNG icon;
+- custom wallpaper, icon theme, cursor and fonts;
+- custom KWin script/effect;
+- styled Konsole or another supported terminal;
+- Zsh/Starship or equivalent shell styling;
+- optional APT/Flatpak/Snap applications in multiple categories.
