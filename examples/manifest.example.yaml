@@ -1,0 +1,27 @@
+schema_version: 1
+source:
+  distro_id: debian
+  distro_name: Debian GNU/Linux 13
+  distro_version: '13'
+desktop:
+  desktop: kde-plasma
+  version: plasmashell 6.x
+  widgets:
+    - org.kde.plasma.kickoff
+    - com.example.customclock
+  user_plasmoids:
+    - com.example.customclock
+packages:
+  - name: firefox-esr
+    provider: apt
+    category: internet
+    required_for_appearance: false
+  - name: kvantum
+    provider: apt
+    category: other
+    required_for_appearance: true
+    reason: Package name suggests it participates in desktop appearance.
+restore:
+  home_placeholder: '{{HOME}}'
+  payload_root: payload/home
+  application_install_mode: online-selective

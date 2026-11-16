@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mydistro-profile"
+version = "0.1.0"
+description = "Capture a personalized Linux desktop as a portable, installable profile."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["PyYAML>=6.0.2"]
+license = {text = "MIT"}
+authors = [{name = "Taha project"}]
+
+[project.scripts]
+mydistro = "mydistro.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
