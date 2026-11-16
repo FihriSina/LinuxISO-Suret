@@ -1,7 +1,8 @@
 # Development status
 
-## v0.2 implemented
+## v0.2.1 implemented
 
+- uv-based development workflow with committed `uv.lock`, managed project Python, and `uv run`/`uv sync`
 - project / CLI renamed to `linux-iso`
 - product branding: **Linux ISO — Nakş**
 - KDE Plasma configuration capture
@@ -23,6 +24,7 @@
 
 - Python source compiles successfully.
 - Automated tests: 5 passing.
+- Project metadata is migrated to uv (`uv_build`, `.python-version`, dependency groups, `uv sync`/`uv run`).
 - Generated Calamares job, first-boot helper and settings patcher are syntax-checked by the test suite.
 - Synthetic profile tests verify custom asset portability and shell-secret redaction.
 

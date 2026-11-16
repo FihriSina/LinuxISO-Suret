@@ -4,7 +4,7 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.2
+## Current milestone: v0.2.1
 
 The current implementation targets **KDE Plasma** and already contains the capture, profile, installer-catalog and ISO-project generation layers.
 
@@ -37,12 +37,31 @@ The shareable profile intentionally avoids known credential stores such as SSH p
 
 This is defense-in-depth, not a formal secret-leak proof. Use `linux-iso audit` before publishing a profile or ISO.
 
-## Install for development
+## Install for development with uv
+
+`linux-iso` uses **uv** for Python version, dependency, environment and lockfile management. Developers do not need to create or activate a virtual environment manually.
+
+Install uv once (official installer):
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Then, from the repository root:
+
+```bash
+uv sync
+uv run linux-iso --help
+```
+
+`uv sync` creates/updates the project environment and installs the project in editable mode. `uv run` automatically checks the lockfile/environment before executing the command. On the first connected sync, uv generates `uv.lock`; commit that file so dependency resolution stays reproducible across developer machines.
+
+If this checkout was previously set up with manual `python3 -m venv`, a one-time clean migration is recommended:
+
+```bash
+deactivate 2>/dev/null || true
+rm -rf .venv
+uv sync
 ```
 
 ## 1. Capture the current KDE Plasma system
@@ -126,7 +145,7 @@ cd ~/linux-iso-build
 ./build.sh
 ```
 
-The current repository stages a complete build description, but **v0.2 is still experimental until the generated ISO is built and boot/install-tested in QEMU/KVM**. Do not write an unvalidated image to production machines.
+The current repository stages a complete build description, but **v0.2.1 is still experimental until the generated ISO is built and boot/install-tested in QEMU/KVM**. Do not write an unvalidated image to production machines.
 
 ## Installer behavior
 
@@ -154,7 +173,7 @@ Clean base system
 
 ## Supported scope
 
-| Area | v0.2 |
+| Area | v0.2.1 |
 |---|---|
 | KDE Plasma capture | Yes |
 | custom SVG/PNG referenced from user config | Yes |
