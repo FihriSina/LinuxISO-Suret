@@ -5,6 +5,8 @@ from pathlib import Path
 
 import yaml
 
+from linux_iso.branding import PRODUCT_NAME
+
 
 def load_manifest(profile: Path) -> dict:
     return yaml.safe_load((profile / "manifest.yaml").read_text(encoding="utf-8"))
@@ -125,9 +127,11 @@ def audit(profile: Path) -> str:
     packages = manifest.get("packages", [])
     security = manifest.get("security", {})
 
+    asset_mode = manifest.get("restore", {}).get("asset_mode", "legacy/all")
     lines = [
-        "Linux ISO — Nakş profile audit",
+        f"{PRODUCT_NAME} profile audit",
         "=" * 31,
+        f"Asset capture mode: {asset_mode}",
         "",
         "Appearance asset bundles",
         "------------------------",
@@ -175,6 +179,8 @@ def audit(profile: Path) -> str:
         if component.get("package"):
             suffix.append(f"package={component.get('provider')}:{component.get('package')}")
         suffix.append(f"bundled={'yes' if component.get('bundled') else 'no'}")
+        if component.get("inherited"):
+            suffix.append(f"inherited-from={component.get('inherited_from')}")
         if component.get("note"):
             suffix.append(f"note={component.get('note')}")
         lines.append(

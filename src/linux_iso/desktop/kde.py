@@ -24,7 +24,7 @@ KDE_CONFIG_FILES = [
     ".config/gtk-4.0/settings.ini",
     ".config/qt5ct/qt5ct.conf",
     ".config/qt6ct/qt6ct.conf",
-    ".config/Kvantum",
+    ".config/Kvantum/kvantum.kvconfig",
 ]
 
 KDE_DATA_PATHS = [
@@ -38,7 +38,6 @@ KDE_DATA_PATHS = [
     ".local/share/kwin/tabbox",
     ".local/share/kwin/decorations",
     ".local/share/color-schemes",
-    ".local/share/konsole",
     ".local/share/wallpapers",
     ".local/share/icons",
     ".icons",
@@ -63,6 +62,7 @@ TERMINAL_FILES = [
     ".config/foot",
     ".config/terminator",
     ".config/yakuakerc",
+    ".local/share/konsole",
 ]
 
 PLUGIN_RE = re.compile(r"^plugin\s*=\s*(.+?)\s*$", re.MULTILINE)
@@ -180,6 +180,9 @@ def active_kde_components(home: Path) -> list[dict[str, str]]:
         ("plasma-theme", home / ".config/plasmarc", "Theme", "name"),
         ("cursor-theme", home / ".config/kcminputrc", "Mouse", "cursorTheme"),
         ("splash-theme", home / ".config/ksplashrc", "KSplash", "Theme"),
+        ("gtk-theme", home / ".config/gtk-3.0/settings.ini", "Settings", "gtk-theme-name"),
+        ("gtk-theme", home / ".config/gtk-4.0/settings.ini", "Settings", "gtk-theme-name"),
+        ("kvantum-theme", home / ".config/Kvantum/kvantum.kvconfig", "General", "theme"),
     ]
     result: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
@@ -362,6 +365,26 @@ def component_locations(home: Path, kind: str, name: str) -> tuple[list[Path], l
             for root in system_roots
             for p in _resolve_named_entry(root, name)
         ]
+    elif kind == "gtk-theme":
+        user_roots = [home / ".local/share/themes", home / ".themes"]
+        system_roots = [Path("/usr/local/share/themes"), Path("/usr/share/themes")]
+        target_root = Path(".local/share/themes")
+        user = [p for root in user_roots for p in _resolve_named_entry(root, name)]
+        system = [
+            (p, target_root / p.name)
+            for root in system_roots
+            for p in _resolve_named_entry(root, name)
+        ]
+    elif kind == "kvantum-theme":
+        user_roots = [home / ".config/Kvantum", home / ".local/share/Kvantum"]
+        system_roots = [Path("/usr/local/share/Kvantum"), Path("/usr/share/Kvantum")]
+        target_root = Path(".config/Kvantum")
+        user = [p for root in user_roots for p in _resolve_named_entry(root, name)]
+        system = [
+            (p, target_root / p.name)
+            for root in system_roots
+            for p in _resolve_named_entry(root, name)
+        ]
     elif kind == "color-scheme":
         user_roots = [home / ".local/share/color-schemes"]
         system_roots = [Path("/usr/local/share/color-schemes"), Path("/usr/share/color-schemes")]
@@ -380,6 +403,49 @@ def component_locations(home: Path, kind: str, name: str) -> tuple[list[Path], l
     user = list(dict.fromkeys(user))
     system = list(dict.fromkeys(system))
     return user, system
+
+
+def _icon_theme_inherits(path: Path) -> list[str]:
+    index = path / "index.theme"
+    if not index.is_file():
+        return []
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    parser.optionxform = str
+    try:
+        parser.read(index, encoding="utf-8")
+    except (OSError, configparser.Error):
+        return []
+    if not parser.has_section("Icon Theme"):
+        return []
+    raw = parser.get("Icon Theme", "Inherits", fallback="")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def icon_theme_inheritance_chain(home: Path, name: str, max_depth: int = 12) -> list[str]:
+    """Return transitive inherited icon themes in deterministic order.
+
+    KDE/FreeDesktop icon themes commonly inherit a base theme. Active-only capture
+    must retain that chain or icons can silently disappear on the restored desktop.
+    """
+    result: list[str] = []
+    queued: list[tuple[str, int]] = [(name, 0)]
+    seen = {_normalized_component_name(name)}
+    while queued:
+        current, depth = queued.pop(0)
+        if depth >= max_depth:
+            continue
+        user, system = component_locations(home, "icon-theme", current)
+        candidates = list(user) + [path for path, _target in system]
+        if not candidates:
+            continue
+        for inherited in _icon_theme_inherits(candidates[0]):
+            normalized = _normalized_component_name(inherited)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            result.append(inherited)
+            queued.append((inherited, depth + 1))
+    return result
 
 
 def ownership_probe(path: Path) -> Path:

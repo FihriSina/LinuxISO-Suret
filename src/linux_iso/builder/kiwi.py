@@ -8,6 +8,9 @@ from typing import Any
 
 import yaml
 
+from linux_iso.branding import PRODUCT_NAME
+from linux_iso.verification import verify_profile
+
 from linux_iso.builder.calamares import generate_calamares_overlay
 
 
@@ -35,7 +38,7 @@ class BaseRecipe:
 
 UBUNTU_2604_KDE = BaseRecipe(
     id="ubuntu-26.04-kde",
-    image_name="linux-iso-naks-ubuntu-26.04",
+    image_name="linux-iso-suret-ubuntu-26.04",
     native_provider="apt",
     repositories=(
         AptRepository(
@@ -201,10 +204,10 @@ def _write_config_xml(destination: Path, recipe: BaseRecipe, manifest: dict[str,
     description = ET.SubElement(root, "description", {"type": "system"})
     ET.SubElement(description, "author").text = "Linux ISO project"
     ET.SubElement(description, "contact").text = "local-build"
-    ET.SubElement(description, "specification").text = "Linux ISO — Nakş personalized KDE Plasma live image"
+    ET.SubElement(description, "specification").text = f"{PRODUCT_NAME} personalized KDE Plasma live image"
 
     preferences = ET.SubElement(root, "preferences")
-    ET.SubElement(preferences, "version").text = "0.2.3"
+    ET.SubElement(preferences, "version").text = "0.2.5"
     ET.SubElement(preferences, "packagemanager").text = "apt"
     ET.SubElement(preferences, "locale").text = "en_US"
     ET.SubElement(preferences, "timezone").text = "UTC"
@@ -284,6 +287,12 @@ def generate_kiwi_project(
     profile = profile.expanduser().resolve()
     destination = destination.expanduser().resolve()
     manifest = _read_manifest(profile)
+    verification = verify_profile(profile)
+    if not verification.ok:
+        detail = "; ".join(verification.errors[:4])
+        if len(verification.errors) > 4:
+            detail += f"; ... {len(verification.errors) - 4} more"
+        raise BuilderError(f"Profile verification failed before ISO staging: {detail}")
     if recipe_id not in RECIPES:
         raise BuilderError(f"Unknown KIWI recipe: {recipe_id}")
     recipe = RECIPES[recipe_id]
@@ -304,7 +313,7 @@ def generate_kiwi_project(
     required = _required_base_packages(manifest)
     marker = destination / "README-BUILDER.txt"
     marker.write_text(
-        "Linux ISO — Nakş v0.2.3 KIWI project\n"
+        f"{PRODUCT_NAME} v0.2.5 KIWI project\n"
         f"Recipe: {recipe.id}\n"
         f"Appearance packages embedded in base image: {len(required)}\n"
         "Run ./build.sh on a KIWI NG build host.\n"

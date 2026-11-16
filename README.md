@@ -1,88 +1,96 @@
-# Linux ISO — Nakş
+# Linux ISO - Suret
 
-**linux-iso** captures a personalized Linux desktop and turns it into a reproducible installation profile. The product name **Nakş** reflects the core idea: carry the user's visual and workflow “imprint” to another machine instead of cloning hardware-specific system state.
+**linux-iso** captures a personalized Linux desktop and turns it into a reproducible installation profile and, later in the pipeline, an installable ISO. The visible product name is **Linux ISO - Suret**; repository, Python package and CLI remain `linux-iso`.
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.2.3
+## Current milestone: v0.2.5
 
-The current implementation targets **KDE Plasma** and already contains the capture, profile, installer-catalog and ISO-project generation layers.
+The current implementation targets **KDE Plasma** and contains the capture, verification, restore, application-catalog and experimental ISO-project generation layers.
 
-### v0.2.3 audit-driven fixes
+### v0.2.5: active-only capture + verification
 
-- Aurorae window-decoration trees are grouped as theme bundles in `audit` instead of appearing as standalone files
-- active Aurorae decoration selection is detected from `kwinrc` and resolved as a portable KDE component
-- a missing `LookAndFeelPackage` is reported as a missing global-theme meta package rather than a fatal missing appearance asset; active subcomponents remain authoritative
-- user-local icon/theme trees are summarized as bundles in `audit` instead of printing hundreds of SVG files one-by-one
-- one-off referenced assets (for example a manually selected ChatGPT PNG icon) remain individually visible
-- native package classification no longer treats `microcode` as VS Code-like development software or `libfishcamp` as a Fish-shell appearance package
-- runtimes/libraries/hardware packages such as `*-microcode`, `lib*`, `*-dev`, `python3-*` and `gcc-*-base` stay in the manifest but are hidden from the application chooser
-- KDE look-and-feel resolution now checks package metadata Id/Name, not only the on-disk directory name, so third-party themes such as `Nordic` can be found when their folder name differs
-- Flatpak/native `.desktop` categories are used when available to improve installer categories
+- default capture mode is now `active`: installed-but-unused theme collections are not copied wholesale
+- `--asset-mode all` retains the old diagnostic/full user-asset capture behavior
+- active icon theme inheritance (`Inherits=`) is followed so required base icon themes remain portable
+- referenced user-local Plasma widgets are bundled; unused local plasmoids are omitted in active mode
+- active KDE icon, cursor, Plasma, color, splash, Aurorae window-decoration, GTK and Kvantum components are resolved separately
+- user fonts, custom `.desktop` launchers, user KWin scripts/effects/tabbox assets and local `hicolor` overrides remain captured because they are part of the user workflow or are not safely reducible yet
+- directly referenced custom SVG/PNG/JPG/font/sound assets remain captured even when they live outside managed theme trees
+- referenced wallpaper packages are promoted to their complete local wallpaper bundle when necessary
+- `linux-iso verify` validates manifest payload presence, SHA-256 checksums, bundled components/widgets and appearance-package dependencies
+- `stage-iso` refuses to stage a profile with verification errors
+- branding is now **Linux ISO - Suret**, fully ASCII-safe for filenames, package metadata and ISO tooling
 
-### Captured into the profile
+### Existing audit-driven fixes
+
+- Aurorae window decorations and icon themes are grouped as bundles in `audit`
+- active Aurorae decoration is detected from `kwinrc`
+- a missing global Look-and-Feel meta package is a warning, not a fatal error, when its active subcomponents are captured separately
+- native package classification hides runtimes, libraries, microcode, headers and `-dev` packages from the application chooser
+- Flatpak/native `.desktop` categories improve application categorization
+- Flatpak remote URL and Snap channel/classic metadata are retained
+
+## Captured desktop state
 
 - Plasma panel and widget layout (`plasma-org.kde.plasma.desktop-appletsrc`)
 - KDE global appearance, KWin, shortcuts, input, lock screen and Dolphin settings
 - Konsole profiles and common terminal configuration
-- Zsh/Fish/Bash configuration, Starship, Kitty, Alacritty, WezTerm, Ghostty, Foot and Terminator config paths when present
-- user-local Plasma widgets (plasmoids)
-- Plasma/KWin scripts, effects, decorations and layout assets
-- icon themes, cursors, wallpapers, fonts, themes and color schemes
+- Zsh/Fish/Bash configuration, Starship, Kitty, Alacritty, WezTerm, Ghostty, Foot, Terminator and Yakuake config paths when present
+- referenced user-local Plasma widgets
+- active themes, icon themes, cursors, wallpapers, fonts, color schemes and window decorations
+- user KWin scripts/effects/tabbox assets
 - `.desktop` launcher overrides
-- one-off SVG/PNG/JPG/font/sound assets directly referenced from captured configuration
-- system-wide Plasma widgets: package-owned widgets become required package dependencies; unpackaged widgets are bundled into the portable profile
+- one-off SVG/PNG/JPG/font/sound assets referenced by captured configuration
+- package-owned system Plasma widgets as required package dependencies
 
-### Applications
+## Applications
 
-Applications are **not embedded into the ISO by default**. The profile records their package provider and the installer generates category-based application selection pages.
+Applications are **not embedded into the ISO by default**. The profile records their provider and the installer generates category-based selection pages.
 
-- APT and Flatpak selections are installed online into the target system during the Calamares install when possible.
-- Flatpak remote name **and URL** are preserved so a clean target can recreate the source remote.
-- Snap, unsupported providers, and failed online installs are stored for a first-boot retry.
-- Native packages that look like system/manual packages are retained in the manifest but hidden from the normal application chooser.
-- packages/components required for appearance are not optional.
+- APT and Flatpak selections are installed online during Calamares when possible.
+- Snap or failed/deferred installs can be retried after first boot.
+- appearance-required packages are mandatory and are not normal optional choices.
+- system/manual packages that are not user-facing applications remain in the manifest but are hidden from the chooser.
 
-### Safety model
+## Safety model
 
-The shareable profile intentionally avoids known credential stores such as SSH private keys, GPG private data, keyrings and NetworkManager secrets. Shell-like files are scanned for likely `TOKEN`, `PASSWORD`, `SECRET`, `API_KEY` and similar assignments and those lines are redacted. Browser profiles and personal documents are not part of the capture set.
+Known credential stores such as SSH private keys, GPG private data, keyrings and NetworkManager secrets are excluded. Likely `TOKEN`, `PASSWORD`, `SECRET`, `API_KEY` and similar shell assignments are redacted. Browser profiles and personal documents are outside the default capture graph.
 
-This is defense-in-depth, not a formal secret-leak proof. Use `linux-iso audit` before publishing a profile or ISO.
+This is defense-in-depth, not a formal secret-leak proof. Run both `audit` and `verify` before publishing a profile or ISO.
 
-## Install for development with uv
+## Development with uv
 
-`linux-iso` uses **uv** for Python version, dependency, environment and lockfile management. Developers do not need to create or activate a virtual environment manually.
-
-Install uv once (official installer):
+Install uv once:
 
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-Then, from the repository root:
+Then:
 
 ```bash
 uv sync
 uv run linux-iso --help
 ```
 
-`uv sync` creates/updates the project environment and installs the project in editable mode. `uv run` automatically checks the lockfile/environment before executing the command. On the first connected sync, uv generates/updates `uv.lock`; commit that file so dependency resolution stays reproducible across developer machines.
-
-If this checkout was previously set up with manual `python3 -m venv`, a one-time clean migration is recommended:
-
-```bash
-deactivate 2>/dev/null || true
-rm -rf .venv
-uv sync
-```
+No manual `python3 -m venv` or `source .venv/bin/activate` is required.
 
 ## 1. Capture the current KDE Plasma system
+
+Recommended active-only profile:
 
 ```bash
 uv run linux-iso scan -o ~/linux-iso-profile
 ```
 
-The resulting portable profile has this shape:
+Diagnostic/full user-asset capture:
+
+```bash
+uv run linux-iso scan -o ~/linux-iso-profile --asset-mode all
+```
+
+The default profile shape is:
 
 ```text
 linux-iso-profile/
@@ -95,18 +103,19 @@ linux-iso-profile/
         └── ...
 ```
 
-Source-home references such as `/home/taha/Pictures/icon.svg` are rewritten to `{{HOME}}/Pictures/icon.svg`. On the target machine the placeholder is resolved to the newly-created user's home directory.
+Source-home references such as `/home/sina/Pictures/icon.svg` become `{{HOME}}/Pictures/icon.svg` and are resolved to the target user's home on restore.
 
-## 2. Inspect and audit
+## 2. Inspect, audit and verify
 
 ```bash
 uv run linux-iso inspect ~/linux-iso-profile
 uv run linux-iso audit ~/linux-iso-profile
+uv run linux-iso verify ~/linux-iso-profile
 ```
 
-`audit` reports captured custom assets, widget origins, appearance dependencies, selectable applications, filtered native packages and security exclusions.
+`verify` checks payload existence and hashes, bundled appearance components, Plasma widgets and required appearance packages. A missing global-theme meta package can be reported as a warning when active subcomponents are already captured; unresolved active components/widgets are errors.
 
-## 3. Test a profile restore without an ISO
+## 3. Test restore without an ISO
 
 Dry run:
 
@@ -126,84 +135,66 @@ uv run linux-iso restore ~/linux-iso-profile --target-home /home/testuser --appl
 uv run linux-iso catalog ~/linux-iso-profile -o application-catalog.json
 ```
 
-Current categories are Internet, Communication, Office, Multimedia, Development, Gaming, System Tools and Other Applications.
+## 5. Stage the experimental ISO build project
 
-## 5. Stage the first ISO build project
-
-The first concrete recipe is **Ubuntu 26.04 LTS + KDE Plasma/Kubuntu + Calamares**:
+First recipe: **Ubuntu 26.04 LTS + KDE Plasma/Kubuntu + Calamares**.
 
 ```bash
 uv run linux-iso stage-iso ~/linux-iso-profile -o ~/linux-iso-build
 ```
 
-This produces a KIWI NG project containing:
+`stage-iso` runs profile verification first. If verification fails, ISO staging stops instead of embedding a known-broken profile.
 
-```text
-linux-iso-build/
-├── config.xml
-├── config.sh
-├── build.sh
-└── root/
-    ├── usr/share/linux-iso/profile/
-    ├── usr/share/linux-iso/calamares/modules/linuxiso-install/
-    ├── etc/calamares/modules/packagechooser-*.conf
-    └── etc/systemd/system/linux-iso-firstboot.service
-```
-
-On a KIWI NG build host:
+The staged tree includes KIWI config, profile payload, Calamares modules and first-boot retry logic. On a KIWI NG build host:
 
 ```bash
 cd ~/linux-iso-build
 ./build.sh
 ```
 
-The current repository stages a complete build description, but **v0.2.3 is still experimental until the generated ISO is built and boot/install-tested in QEMU/KVM**. Do not write an unvalidated image to production machines.
+The build recipe remains **experimental until a generated ISO passes QEMU/KVM live boot and Calamares installation validation**.
 
-## Installer behavior
-
-The intended install flow is:
+## Installer intent
 
 ```text
 Clean base system
       │
       ├─ create target user
-      ├─ apply Nakş profile
+      ├─ apply Suret profile
       │    ├─ Plasma panels/widgets
-      │    ├─ themes/icons/cursors/fonts
+      │    ├─ active themes/icons/cursors/fonts
       │    ├─ custom SVG/PNG assets
       │    └─ terminal configuration
       │
       ├─ category application pages
-      │    ├─ Internet
-      │    ├─ Multimedia
-      │    ├─ Development
-      │    └─ ...
-      │
-      ├─ install selected APT/Flatpak apps online
-      └─ retry deferred/failed installs on first boot
+      ├─ install selected apps online
+      └─ retry deferred installs on first boot
 ```
 
 ## Supported scope
 
-| Area | v0.2.3 |
+| Area | v0.2.5 |
 |---|---|
 | KDE Plasma capture | Yes |
-| custom SVG/PNG referenced from user config | Yes |
-| local Plasma widgets | Yes |
-| package-owned system Plasma widget dependency detection | Yes |
+| active-only appearance capture | Yes |
+| icon theme inheritance | Yes |
+| custom SVG/PNG references | Yes |
+| referenced local Plasma widgets | Yes |
+| package-owned system widget dependency detection | Yes |
 | terminal configuration | Yes |
+| profile verification/checksums | Yes |
 | APT inventory | Yes |
 | Flatpak inventory + remote URL | Yes |
 | Snap inventory | Yes |
-| category application selection generation | Yes |
-| KIWI Ubuntu 26.04 KDE recipe | Experimental |
-| Calamares integration generation | Experimental |
+| categorized installer catalog | Yes |
+| Ubuntu 26.04 KDE KIWI recipe | Experimental |
+| Calamares integration | Experimental |
 | QEMU boot/install validation | Pending |
 | GNOME/Cinnamon/XFCE | Not yet |
 | Arch/Fedora/openSUSE image recipes | Not yet |
 
-Cross-family native package translation is intentionally blocked for now. For example, an Arch/Pacman profile is not silently converted into an Ubuntu/APT ISO; that needs an explicit package-mapping layer in a later milestone.
+Cross-family native package translation is intentionally blocked. A Pacman profile is not silently translated into an APT ISO until an explicit mapping layer exists.
 
 ## Next acceptance target
 
-A source Plasma desktop with two custom panels, third-party plasmoids, manually downloaded launcher/widget icons, a custom wallpaper, cursor/theme/font set, KWin additions and a styled terminal should install into a clean VM without manually recreating the desktop. Optional applications should only appear if selected in the installer.
+A source Plasma desktop with customized panels, third-party plasmoids, manually downloaded icons, a custom wallpaper, cursor/theme/font set, KWin additions and a styled terminal must install into a clean VM without manual desktop reconstruction. Optional applications should appear only when selected during installation.

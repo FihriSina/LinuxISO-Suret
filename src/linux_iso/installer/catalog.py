@@ -9,6 +9,8 @@ from typing import Any
 
 import yaml
 
+from linux_iso.branding import PRODUCT_NAME
+
 CATEGORY_ORDER = [
     "internet",
     "communication",
@@ -95,7 +97,7 @@ def build_catalog(profile: Path) -> dict[str, Any]:
     )
     return {
         "schema_version": 1,
-        "product": "Linux ISO — Nakş",
+        "product": PRODUCT_NAME,
         "required_for_appearance": sorted(required, key=lambda p: (p["provider"], p["name"].lower())),
         "categories": categories,
         "hidden_native_packages": hidden_optional,

@@ -4,29 +4,40 @@ import argparse
 import sys
 from pathlib import Path
 
+from linux_iso.branding import PRODUCT_NAME
 from linux_iso.builder.kiwi import BuilderError, RECIPES, generate_kiwi_project
 from linux_iso.capture import CaptureError, capture_profile
 from linux_iso.installer.catalog import write_catalog
 from linux_iso.planner import audit, summarize
 from linux_iso.restore import RestoreError, restore_profile
+from linux_iso.verification import verify_profile
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="linux-iso",
-        description="Linux ISO — Nakş: capture, rebuild and install a personalized Linux desktop.",
+        description=f"{PRODUCT_NAME}: capture, rebuild and install a personalized Linux desktop.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
     scan = sub.add_parser("scan", help="Capture the current KDE Plasma profile")
     scan.add_argument("-o", "--output", type=Path, default=Path("./linux-iso-profile"))
     scan.add_argument("--home", type=Path, default=None, help="Override source home (mainly for testing)")
+    scan.add_argument(
+        "--asset-mode",
+        choices=("active", "all"),
+        default="active",
+        help="Capture only active appearance assets (default) or every installed user asset",
+    )
 
     inspect = sub.add_parser("inspect", help="Show a captured profile summary")
     inspect.add_argument("profile", type=Path)
 
     audit_cmd = sub.add_parser("audit", help="Report captured assets, widgets and install dependencies")
     audit_cmd.add_argument("profile", type=Path)
+
+    verify = sub.add_parser("verify", help="Verify payload checksums and restore dependencies")
+    verify.add_argument("profile", type=Path)
 
     restore = sub.add_parser("restore", help="Restore profile files into a target home")
     restore.add_argument("profile", type=Path)
@@ -50,12 +61,13 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.command == "scan":
-            manifest = capture_profile(args.output, args.home)
+            manifest = capture_profile(args.output, args.home, asset_mode=args.asset_mode)
             print(f"Profile created: {args.output.resolve()}")
             print(f"Configs: {len(manifest.desktop.configs)}")
             print(f"Assets: {len(manifest.desktop.custom_assets)}")
             print(f"Widgets: {len(manifest.desktop.widgets)}")
             print(f"Packages: {len(manifest.packages)}")
+            print(f"Asset mode: {manifest.restore.get('asset_mode', 'unknown')}")
             return 0
         if args.command == "inspect":
             print(summarize(args.profile))
@@ -63,6 +75,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "audit":
             print(audit(args.profile))
             return 0
+        if args.command == "verify":
+            result = verify_profile(args.profile)
+            print(result.render())
+            return 0 if result.ok else 3
         if args.command == "restore":
             ops = restore_profile(args.profile, args.target_home, apply=args.apply)
             action = "Restored" if args.apply else "Would restore"

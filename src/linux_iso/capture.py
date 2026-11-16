@@ -16,6 +16,7 @@ from linux_iso.desktop.kde import (
     existing_kde_paths,
     package_owner,
     ownership_probe,
+    icon_theme_inheritance_chain,
     referenced_widgets,
     system_plasmoid,
     user_plasmoids,
@@ -184,15 +185,125 @@ def _copy_component(
     return []
 
 
-def capture_profile(output: Path, home: Path | None = None) -> Manifest:
+def _portable_home_path(path: Path, home: Path) -> str:
+    try:
+        rel = path.resolve().relative_to(home.resolve())
+    except (OSError, ValueError):
+        return path.as_posix()
+    return f"{{{{HOME}}}}/{rel.as_posix()}"
+
+
+def _dedupe_captured(items: list[CapturedFile]) -> list[CapturedFile]:
+    by_destination: dict[str, CapturedFile] = {}
+    for item in items:
+        by_destination[item.destination] = item
+    return [by_destination[key] for key in sorted(by_destination)]
+
+
+def _copy_local_entry(
+    src: Path,
+    payload_home: Path,
+    home: Path,
+    kind: str,
+    excluded: list[str],
+) -> list[CapturedFile]:
+    if src.is_dir():
+        return _copy_tree(src, payload_home, home, kind, excluded)
+    if src.is_file():
+        relative = _safe_relative(src, home)
+        return [_copy_file(src, payload_home / relative, home, kind)]
+    return []
+
+
+def _active_only_always_roots(home: Path) -> list[Path]:
+    """User state retained even when inactive theme collections are pruned.
+
+    These roots are either difficult to map safely to a single active package or
+    represent small user-authored state that is part of the desktop workflow.
+    """
+    candidates = [
+        home / ".local/share/fonts",
+        home / ".fonts",
+        home / ".local/share/applications",
+        home / ".local/share/kwin/scripts",
+        home / ".local/share/kwin/effects",
+        home / ".local/share/kwin/tabbox",
+        home / ".local/share/icons/hicolor",
+    ]
+    return [path for path in candidates if path.exists()]
+
+
+def _reference_files(roots: list[Path]) -> list[Path]:
+    files: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        if root.is_file():
+            if root not in seen:
+                seen.add(root)
+                files.append(root)
+            continue
+        if not root.is_dir():
+            continue
+        for item in root.rglob("*"):
+            if not item.is_file() or item.is_symlink() or path_is_sensitive(item):
+                continue
+            if item.suffix.lower() in TEXT_EXTENSIONS or item.name.endswith("rc"):
+                if item not in seen:
+                    seen.add(item)
+                    files.append(item)
+    return files
+
+
+def _promoted_reference_root(src: Path, home: Path) -> Path | None:
+    """Promote referenced wallpaper package files to the whole wallpaper bundle."""
+    root = home / ".local/share/wallpapers"
+    try:
+        rel = src.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return None
+    if len(rel.parts) >= 2:
+        candidate = root / rel.parts[0]
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _expanded_active_components(home: Path) -> list[dict[str, object]]:
+    components: list[dict[str, object]] = [dict(item) for item in active_kde_components(home)]
+    seen = {(str(item["kind"]), str(item["name"])) for item in components}
+    active_icons = [item for item in components if item.get("kind") == "icon-theme"]
+    for item in active_icons:
+        for inherited in icon_theme_inheritance_chain(home, str(item["name"])):
+            token = ("icon-theme", inherited)
+            if token in seen:
+                continue
+            seen.add(token)
+            components.append(
+                {
+                    "kind": "icon-theme",
+                    "name": inherited,
+                    "inherited": True,
+                    "inherited_from": item["name"],
+                }
+            )
+    return components
+
+
+def capture_profile(
+    output: Path,
+    home: Path | None = None,
+    asset_mode: str = "active",
+) -> Manifest:
     home = (home or Path.home()).expanduser().resolve()
     output = output.expanduser().resolve()
+    if asset_mode not in {"active", "all"}:
+        raise CaptureError("asset_mode must be 'active' or 'all'.")
     if output == home or output in home.parents:
         raise CaptureError("Output directory must not be the home directory or an ancestor of it.")
 
     desktop_name, desktop_version = detect_desktop()
     if desktop_name != "kde-plasma":
-        raise CaptureError(f"v0.2.3 currently supports KDE Plasma; detected: {desktop_name}")
+        raise CaptureError(f"v0.2.5 currently supports KDE Plasma; detected: {desktop_name}")
 
     if output.exists():
         shutil.rmtree(output)
@@ -204,7 +315,7 @@ def capture_profile(output: Path, home: Path | None = None) -> Manifest:
     captured_configs: list[CapturedFile] = []
     captured_assets: list[CapturedFile] = []
 
-    # Capture native Plasma/KDE configs first.
+    # Capture native Plasma/KDE and terminal state first.
     for src in configs + terminal_paths:
         if path_is_sensitive(src):
             excluded.append(str(src).replace(str(home), "{{HOME}}", 1))
@@ -215,44 +326,43 @@ def capture_profile(output: Path, home: Path | None = None) -> Manifest:
             relative = _safe_relative(src, home)
             captured_configs.append(_copy_file(src, payload_home / relative, home, "config"))
 
-    # Capture user-local Plasma packages, icon themes, fonts, wallpapers, .desktop overrides, etc.
-    for src in data_paths:
-        captured_assets.extend(_copy_tree(src, payload_home, home, "desktop-asset", excluded))
-
-    # Catch one-off icon/wallpaper/font paths referenced by Plasma, launchers,
-    # plasmoid metadata/configuration and terminal configuration.
-    reference_files: list[Path] = []
-    for root in configs + terminal_paths + data_paths:
-        if root.is_file():
-            reference_files.append(root)
-            continue
-        if not root.is_dir():
-            continue
-        for item in root.rglob("*"):
-            if not item.is_file() or item.is_symlink() or path_is_sensitive(item):
-                continue
-            if item.suffix.lower() in TEXT_EXTENSIONS or item.name.endswith("rc"):
-                reference_files.append(item)
-
-    referenced = find_referenced_assets(reference_files, home)
-    for src in referenced:
-        if path_is_sensitive(src):
-            continue
-        relative = _safe_relative(src, home)
-        destination = payload_home / relative
-        if destination.exists():
-            continue
-        captured_assets.append(_copy_file(src, destination, home, "referenced-asset"))
-
     widgets = referenced_widgets(home)
     local_plasmoids = user_plasmoids(home)
+    active_components = _expanded_active_components(home)
+
+    # v0.2.5 defaults to active-only capture. Full mode is retained for diagnostics
+    # and backwards-compatible "capture everything installed" behaviour.
+    reference_roots: list[Path] = list(configs + terminal_paths)
+    if asset_mode == "all":
+        for src in data_paths:
+            captured_assets.extend(_copy_tree(src, payload_home, home, "desktop-asset", excluded))
+        reference_roots.extend(data_paths)
+    else:
+        always_roots = _active_only_always_roots(home)
+        for src in always_roots:
+            captured_assets.extend(_copy_tree(src, payload_home, home, "desktop-asset", excluded))
+        reference_roots.extend(always_roots)
+
     packages = collect_packages()
     package_index = {(p.provider, p.name): p for p in packages}
     widget_details: list[dict[str, object]] = []
 
     for plugin_id in widgets:
         if plugin_id in local_plasmoids:
-            widget_details.append({"id": plugin_id, "source": "user-local", "bundled": True})
+            local_path = home / ".local/share/plasma/plasmoids" / plugin_id
+            if asset_mode == "active":
+                captured_assets.extend(
+                    _copy_local_entry(local_path, payload_home, home, "plasmoid", excluded)
+                )
+            reference_roots.append(local_path)
+            widget_details.append(
+                {
+                    "id": plugin_id,
+                    "source": "user-local",
+                    "bundled": True,
+                    "bundle_root": _portable_home_path(local_path, home),
+                }
+            )
             continue
         system_path = system_plasmoid(plugin_id)
         if system_path is None:
@@ -279,37 +389,56 @@ def capture_profile(output: Path, home: Path | None = None) -> Manifest:
                 _copy_external_tree(system_path, destination_root, home, "system-plasmoid", excluded)
             )
             widget_details.append(
-                {"id": plugin_id, "source": "system-unpackaged", "bundled": True}
+                {
+                    "id": plugin_id,
+                    "source": "system-unpackaged",
+                    "bundled": True,
+                    "bundle_root": f"{{{{HOME}}}}/.local/share/plasma/plasmoids/{plugin_id}",
+                }
             )
 
     component_details: list[dict[str, object]] = []
-    for component in active_kde_components(home):
-        kind = component["kind"]
-        name = component["name"]
+    for component in active_components:
+        kind = str(component["kind"])
+        name = str(component["name"])
+        inherited = bool(component.get("inherited"))
         user_paths, system_paths = component_locations(home, kind, name)
         local = next((path for path in user_paths if path.exists()), None)
         if local is not None:
-            component_details.append(
-                {"kind": kind, "name": name, "source": "user-local", "bundled": True}
-            )
+            if asset_mode == "active":
+                captured_assets.extend(
+                    _copy_local_entry(local, payload_home, home, "appearance-component", excluded)
+                )
+            reference_roots.append(local)
+            detail: dict[str, object] = {
+                "kind": kind,
+                "name": name,
+                "source": "user-local",
+                "bundled": True,
+                "bundle_root": _portable_home_path(local, home),
+            }
+            if inherited:
+                detail["inherited"] = True
+                detail["inherited_from"] = component.get("inherited_from")
+            component_details.append(detail)
             continue
 
         system_entry = next((item for item in system_paths if item[0].exists()), None)
         if system_entry is None:
             if kind == "look-and-feel":
-                component_details.append(
-                    {
-                        "kind": kind,
-                        "name": name,
-                        "source": "missing-meta-package",
-                        "bundled": False,
-                        "note": "global theme package is absent; active subcomponents are captured separately",
-                    }
-                )
+                detail = {
+                    "kind": kind,
+                    "name": name,
+                    "source": "missing-meta-package",
+                    "bundled": False,
+                    "note": "global theme package is absent; active subcomponents are captured separately",
+                }
             else:
-                component_details.append(
-                    {"kind": kind, "name": name, "source": "not-found", "bundled": False}
-                )
+                detail = {"kind": kind, "name": name, "source": "not-found", "bundled": False}
+            if inherited:
+                detail["inherited"] = True
+                detail["inherited_from"] = component.get("inherited_from")
+            component_details.append(detail)
             continue
 
         system_path, target_relative = system_entry
@@ -318,24 +447,56 @@ def capture_profile(output: Path, home: Path | None = None) -> Manifest:
             provider, package_name = owner
             reason = f"Provides active KDE {kind}: {name}"
             _mark_required_package(packages, package_index, provider, package_name, reason)
-            component_details.append(
-                {
-                    "kind": kind,
-                    "name": name,
-                    "source": "system-package",
-                    "provider": provider,
-                    "package": package_name,
-                    "bundled": False,
-                }
-            )
+            detail = {
+                "kind": kind,
+                "name": name,
+                "source": "system-package",
+                "provider": provider,
+                "package": package_name,
+                "bundled": False,
+            }
+            if inherited:
+                detail["inherited"] = True
+                detail["inherited_from"] = component.get("inherited_from")
+            component_details.append(detail)
         else:
             captured_assets.extend(
                 _copy_component(system_path, payload_home, target_relative, home, excluded)
             )
-            component_details.append(
-                {"kind": kind, "name": name, "source": "system-unpackaged", "bundled": True}
-            )
+            detail = {
+                "kind": kind,
+                "name": name,
+                "source": "system-unpackaged",
+                "bundled": True,
+                "bundle_root": f"{{{{HOME}}}}/{target_relative.as_posix()}",
+            }
+            if inherited:
+                detail["inherited"] = True
+                detail["inherited_from"] = component.get("inherited_from")
+            component_details.append(detail)
 
+    # Catch one-off icon/wallpaper/font paths referenced by active configs,
+    # active appearance packages, launchers and terminal configuration.
+    referenced = find_referenced_assets(_reference_files(reference_roots), home)
+    promoted_roots: set[Path] = set()
+    for src in referenced:
+        if path_is_sensitive(src):
+            continue
+        promoted = _promoted_reference_root(src, home)
+        if promoted is not None and promoted not in promoted_roots:
+            promoted_roots.add(promoted)
+            captured_assets.extend(
+                _copy_tree(promoted, payload_home, home, "referenced-bundle", excluded)
+            )
+            continue
+        relative = _safe_relative(src, home)
+        destination = payload_home / relative
+        if destination.exists():
+            continue
+        captured_assets.append(_copy_file(src, destination, home, "referenced-asset"))
+
+    captured_configs = _dedupe_captured(captured_configs)
+    captured_assets = _dedupe_captured(captured_assets)
     packages.sort(key=lambda p: (p.category, p.provider, p.name.lower()))
     desktop = DesktopProfile(
         desktop=desktop_name,
@@ -354,7 +515,7 @@ def capture_profile(output: Path, home: Path | None = None) -> Manifest:
         "notes": [
             "Known key/credential stores are not captured.",
             "Possible secrets in shell startup files are redacted.",
-            "Files larger than 64 MiB are excluded from profile payload in v0.2.3.",
+            "Files larger than 64 MiB are excluded from profile payload in v0.2.5.",
         ],
     }
 
@@ -369,7 +530,8 @@ def capture_profile(output: Path, home: Path | None = None) -> Manifest:
             "home_placeholder": "{{HOME}}",
             "payload_root": "payload/home",
             "application_install_mode": "online-selective",
-            "profile_version": "0.2.3",
+            "profile_version": "0.2.5",
+            "asset_mode": asset_mode,
         },
     )
 
@@ -382,6 +544,7 @@ def capture_profile(output: Path, home: Path | None = None) -> Manifest:
         json.dumps(
             {
                 "desktop": desktop_name,
+                "asset_mode": asset_mode,
                 "config_files": len(captured_configs),
                 "asset_files": len(captured_assets),
                 "widgets": desktop.widgets,
