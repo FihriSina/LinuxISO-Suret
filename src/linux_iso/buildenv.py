@@ -109,8 +109,8 @@ def build_host_report() -> BuildHostReport:
             warnings.append("Falling back to direct kiwi-ng on an unvalidated host distribution.")
     else:
         blockers.append(
-            "No usable KIWI build backend was found. Install kiwi-boxbuild + podman (preferred) "
-            "or kiwi-ng for direct builds."
+            "No usable KIWI build backend was found. On Pardus 25 run "
+            "./scripts/install-build-deps-pardus.sh, or install kiwi-ng + podman + QEMU manually."
         )
 
     if kiwi_boxbuild and not podman:

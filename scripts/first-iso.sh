@@ -18,10 +18,10 @@ printf '\n== 2/6 profile verification ==\n'
 uv run linux-iso verify "$PROFILE"
 
 printf '\n== 3/6 portability ==\n'
-uv run linux-iso portability "$PROFILE" --recipe "$RECIPE" -o "$HOME/linux-iso-portability-v030.txt"
+uv run linux-iso portability "$PROFILE" --recipe "$RECIPE" -o "$HOME/linux-iso-portability-v031.txt"
 
 printf '\n== 4/6 build host ==\n'
-if uv run linux-iso build-doctor | tee "$HOME/linux-iso-build-doctor-v030.txt"; then
+if uv run linux-iso build-doctor | tee "$HOME/linux-iso-build-doctor-v031.txt"; then
   HOST_READY=1
 else
   HOST_READY=0
@@ -38,5 +38,6 @@ else
   printf '\n== 6/6 ISO build deferred ==\n'
   echo "Build project is ready at: $BUILD_DIR"
   echo "The build host is missing a KIWI/Podman/QEMU requirement."
-  echo "Install the missing build tools shown above, then run: $BUILD_DIR/build.sh"
+  echo "On Pardus 25 run: ./scripts/install-build-deps-pardus.sh"
+  echo "Then rerun: ./scripts/first-iso.sh \"$PROFILE\" \"$BUILD_DIR\""
 fi

@@ -4,13 +4,13 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.3.0
+## Current milestone: v0.3.1
 
 The current implementation targets **KDE Plasma** and contains the capture, verification, restore, application-catalog and experimental ISO-project generation layers.
 
-### v0.3.0: first bootable-ISO build pipeline
+### v0.3.1: first bootable-ISO build pipeline
 
-The profile scanner is frozen for the first ISO cycle. v0.3.0 moves the project into image-building and live-session validation.
+The profile scanner is frozen for the first ISO cycle. v0.3.1 moves the project into image-building and live-session validation.
 
 - `linux-iso build-doctor` checks Podman, KIWI, QEMU, KVM access and free disk space
 - Pardus and other unvalidated direct-build hosts prefer KIWI boxbuild isolation
@@ -172,7 +172,7 @@ Clean base system
 
 ## Supported scope
 
-| Area | v0.3.0 |
+| Area | v0.3.1 |
 |---|---|
 | KDE Plasma capture | Yes |
 | active-only appearance capture | Yes |
@@ -199,7 +199,7 @@ Cross-family native package translation is intentionally blocked. A Pacman profi
 
 A source Plasma desktop with customized panels, third-party plasmoids, manually downloaded icons, a custom wallpaper, cursor/theme/font set, KWin additions and a styled terminal must install into a clean VM without manual desktop reconstruction. Optional applications should appear only when selected during installation.
 
-## Development environment diagnostics (v0.3.0)
+## Development environment diagnostics (v0.3.1)
 
 `uv` manages the project environment. The project explicitly enables the `dev`
 dependency group, which contains pytest.

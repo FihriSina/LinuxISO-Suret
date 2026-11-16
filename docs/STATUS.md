@@ -1,6 +1,6 @@
 # Development status
 
-## v0.3.0 implemented
+## v0.3.1 implemented
 
 - first executable KIWI ISO build pipeline (`build-doctor`, `build-iso`, staged `build.sh`)
 - Pardus/unvalidated hosts prefer boxbuild; direct KIWI remains a fallback
@@ -42,7 +42,7 @@
 - Calamares installation into a disposable virtual disk
 - post-install Plasma fidelity comparison
 
-Those are now the active v0.3.0 real-system acceptance gates.
+Those are now the active v0.3.1 real-system acceptance gates.
 
 
 ## v0.2.7 environment hardening
