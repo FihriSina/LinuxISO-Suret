@@ -10,6 +10,7 @@ from linux_iso.capture import CaptureError, capture_profile
 from linux_iso.diagnostics import doctor_report
 from linux_iso.installer.catalog import write_catalog
 from linux_iso.planner import audit, summarize
+from linux_iso.portability import portability_report
 from linux_iso.restore import RestoreError, restore_profile
 from linux_iso.verification import verify_profile
 
@@ -39,6 +40,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify = sub.add_parser("verify", help="Verify payload checksums and restore dependencies")
     verify.add_argument("profile", type=Path)
+
+    portability = sub.add_parser("portability", help="Report whether a profile is ready for an ISO target recipe")
+    portability.add_argument("profile", type=Path)
+    portability.add_argument("--recipe", choices=sorted(RECIPES), default="ubuntu-26.04-kde")
+    portability.add_argument("-o", "--output", type=Path, default=None, help="Also write the report to a text file")
 
     restore = sub.add_parser("restore", help="Restore profile files into a target home")
     restore.add_argument("profile", type=Path)
@@ -81,6 +87,14 @@ def main(argv: list[str] | None = None) -> int:
             result = verify_profile(args.profile)
             print(result.render())
             return 0 if result.ok else 3
+        if args.command == "portability":
+            result = portability_report(args.profile, recipe_id=args.recipe)
+            rendered = result.render()
+            print(rendered)
+            if args.output is not None:
+                args.output.parent.mkdir(parents=True, exist_ok=True)
+                args.output.write_text(rendered + "\n", encoding="utf-8")
+            return 0 if result.ready else 4
         if args.command == "restore":
             ops = restore_profile(args.profile, args.target_home, apply=args.apply)
             action = "Restored" if args.apply else "Would restore"

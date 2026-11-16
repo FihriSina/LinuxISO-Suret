@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from linux_iso import __version__
 from linux_iso.branding import PRODUCT_NAME
 from linux_iso.verification import verify_profile
 
@@ -92,6 +93,7 @@ from pathlib import Path
 
 import yaml
 
+from linux_iso import __version__
 SETTINGS = Path("/etc/calamares/settings.conf")
 FRAGMENT = Path("/etc/calamares/linux-iso-settings-fragment.yaml")
 
@@ -207,7 +209,7 @@ def _write_config_xml(destination: Path, recipe: BaseRecipe, manifest: dict[str,
     ET.SubElement(description, "specification").text = f"{PRODUCT_NAME} personalized KDE Plasma live image"
 
     preferences = ET.SubElement(root, "preferences")
-    ET.SubElement(preferences, "version").text = "0.2.8"
+    ET.SubElement(preferences, "version").text = __version__
     ET.SubElement(preferences, "packagemanager").text = "apt"
     ET.SubElement(preferences, "locale").text = "en_US"
     ET.SubElement(preferences, "timezone").text = "UTC"
@@ -310,10 +312,17 @@ def generate_kiwi_project(
     _write_build_scripts(destination)
     _write_config_xml(destination / "config.xml", recipe, manifest)
 
+    from linux_iso.portability import portability_report
+    portability = portability_report(profile, recipe_id=recipe_id)
+    if not portability.ready:
+        detail = "; ".join(portability.blockers[:4])
+        raise BuilderError(f"Profile portability check failed before ISO staging: {detail}")
+    (destination / "PORTABILITY.txt").write_text(portability.render() + "\n", encoding="utf-8")
+
     required = _required_base_packages(manifest)
     marker = destination / "README-BUILDER.txt"
     marker.write_text(
-        f"{PRODUCT_NAME} v0.2.8 KIWI project\n"
+        f"{PRODUCT_NAME} v{__version__} KIWI project\n"
         f"Recipe: {recipe.id}\n"
         f"Appearance packages embedded in base image: {len(required)}\n"
         "Run ./build.sh on a KIWI NG build host.\n"

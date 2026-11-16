@@ -1,6 +1,6 @@
 # Development status
 
-## v0.2.5 implemented
+## v0.2.9 implemented
 
 - visible product branding: **Linux ISO - Suret**; repository/package/CLI: `linux-iso`
 - uv-based development workflow (`uv sync`, `uv run`, `.python-version`, `uv_build`)
@@ -9,7 +9,7 @@
 - active icon theme `Inherits=` dependency traversal
 - referenced local plasmoid capture; unused local plasmoids are pruned in active mode
 - active icon/cursor/Plasma/color/splash/window-decoration/GTK/Kvantum component resolution
-- user fonts, launchers, KWin scripts/effects/tabbox state and hicolor overrides retained
+- user fonts, launchers, enabled KWin scripts/effects, tabbox state and hicolor overrides retained
 - referenced wallpaper bundle promotion and one-off custom asset capture
 - package-owned system widget/component dependencies marked required for appearance
 - `linux-iso verify` checksum/dependency/bundle validation
@@ -46,3 +46,13 @@ Those are the v0.3 acceptance gates.
 - Verification reports them as warnings rather than fatal errors.
 - Direct active appearance components still fail verification when unresolved.
 - Profile version metadata is synchronized to 0.2.8.
+
+
+## v0.2.9 portability freeze
+
+- `linux-iso portability` evaluates a verified profile against an ISO recipe.
+- User-local KWin scripts/effects are captured only when enabled in `kwinrc`.
+- Bundled Plasma widgets record minimum Plasma API, KPackage structure and QML imports.
+- Non-Qt/KDE QML imports are surfaced as portability warnings.
+- KIWI staging emits `PORTABILITY.txt` and refuses portability blockers.
+- Scanner/verification work is intended to freeze after real-system v0.2.9 validation; v0.3 moves to boot/install testing.

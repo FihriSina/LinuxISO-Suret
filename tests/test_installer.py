@@ -91,6 +91,7 @@ def test_stage_iso_project_contains_profile_installer_and_required_packages(tmp_
     assert 'name="flatpak"' in xml
     assert (destination / "root/usr/share/linux-iso/profile/payload/home/.config/kdeglobals").is_file()
     assert (destination / "root/usr/share/linux-iso/profile/catalog.json").is_file()
+    assert (destination / "PORTABILITY.txt").is_file()
     assert (destination / "root/usr/share/linux-iso/calamares/modules/linuxiso-install/main.py").is_file()
     assert (destination / "root/etc/calamares/modules/packagechooser-linuxiso_internet.conf").is_file()
     fragment = yaml.safe_load(

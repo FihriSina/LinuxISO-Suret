@@ -4,25 +4,22 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.2.8
+## Current milestone: v0.2.9
 
 The current implementation targets **KDE Plasma** and contains the capture, verification, restore, application-catalog and experimental ISO-project generation layers.
 
-### v0.2.8: active-only capture + verification + inherited icon fallback handling
+### v0.2.9: portability gate + active KWin plugins + widget runtime hints
 
-Unresolved inherited icon compatibility themes (for example `AdwaitaLegacy`) are now reported as verification warnings instead of fatal errors. Directly active themes still fail verification when unresolved.
+The scanner/verification layer is now at its pre-v0.3 freeze point. v0.2.9 adds a target-oriented portability report, reduces KWin capture to enabled user plugins, and records Plasma widget runtime hints.
 
-- default capture mode is now `active`: installed-but-unused theme collections are not copied wholesale
-- `--asset-mode all` retains the old diagnostic/full user-asset capture behavior
-- active icon theme inheritance (`Inherits=`) is followed so required base icon themes remain portable
-- referenced user-local Plasma widgets are bundled; unused local plasmoids are omitted in active mode
-- active KDE icon, cursor, Plasma, color, splash, Aurorae window-decoration, GTK and Kvantum components are resolved separately
-- user fonts, custom `.desktop` launchers, user KWin scripts/effects/tabbox assets and local `hicolor` overrides remain captured because they are part of the user workflow or are not safely reducible yet
-- directly referenced custom SVG/PNG/JPG/font/sound assets remain captured even when they live outside managed theme trees
-- referenced wallpaper packages are promoted to their complete local wallpaper bundle when necessary
-- `linux-iso verify` validates manifest payload presence, SHA-256 checksums, bundled components/widgets and appearance-package dependencies
-- `stage-iso` refuses to stage a profile with verification errors
-- branding is now **Linux ISO - Suret**, fully ASCII-safe for filenames, package metadata and ISO tooling
+- `linux-iso portability PROFILE --recipe ubuntu-26.04-kde` reports READY / READY WITH WARNINGS / BLOCKED
+- active user KWin scripts/effects are detected from `[Plugins] <pluginId>Enabled=true` in `kwinrc`; installed-but-disabled user plugins are omitted from active profiles
+- bundled Plasma widgets record `X-Plasma-API-Minimum-Version`, KPackage type and QML imports
+- non-Qt/KDE QML imports are reported as portability warnings rather than silently ignored
+- active-only icon inheritance, widgets, themes, terminal settings and one-off custom assets remain preserved
+- `stage-iso` writes `PORTABILITY.txt` and refuses profiles with portability blockers
+- `verify` remains the integrity gate; portability is the target-recipe readiness gate
+- branding remains **Linux ISO - Suret**, with repo/package/CLI name `linux-iso`
 
 ### Existing audit-driven fixes
 
@@ -41,7 +38,7 @@ Unresolved inherited icon compatibility themes (for example `AdwaitaLegacy`) are
 - Zsh/Fish/Bash configuration, Starship, Kitty, Alacritty, WezTerm, Ghostty, Foot, Terminator and Yakuake config paths when present
 - referenced user-local Plasma widgets
 - active themes, icon themes, cursors, wallpapers, fonts, color schemes and window decorations
-- user KWin scripts/effects/tabbox assets
+- enabled user KWin scripts/effects plus user tabbox assets
 - `.desktop` launcher overrides
 - one-off SVG/PNG/JPG/font/sound assets referenced by captured configuration
 - package-owned system Plasma widgets as required package dependencies
@@ -113,6 +110,7 @@ Source-home references such as `/home/sina/Pictures/icon.svg` become `{{HOME}}/P
 uv run linux-iso inspect ~/linux-iso-profile
 uv run linux-iso audit ~/linux-iso-profile
 uv run linux-iso verify ~/linux-iso-profile
+uv run linux-iso portability ~/linux-iso-profile --recipe ubuntu-26.04-kde
 ```
 
 `verify` checks payload existence and hashes, bundled appearance components, Plasma widgets and required appearance packages. A missing global-theme meta package can be reported as a warning when active subcomponents are already captured; unresolved active components/widgets are errors.
@@ -175,7 +173,7 @@ Clean base system
 
 ## Supported scope
 
-| Area | v0.2.8 |
+| Area | v0.2.9 |
 |---|---|
 | KDE Plasma capture | Yes |
 | active-only appearance capture | Yes |
@@ -201,7 +199,7 @@ Cross-family native package translation is intentionally blocked. A Pacman profi
 
 A source Plasma desktop with customized panels, third-party plasmoids, manually downloaded icons, a custom wallpaper, cursor/theme/font set, KWin additions and a styled terminal must install into a clean VM without manual desktop reconstruction. Optional applications should appear only when selected during installation.
 
-## Development environment diagnostics (v0.2.8)
+## Development environment diagnostics (v0.2.9)
 
 `uv` manages the project environment. The project explicitly enables the `dev`
 dependency group, which contains pytest.

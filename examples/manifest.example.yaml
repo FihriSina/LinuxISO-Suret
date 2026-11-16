@@ -39,4 +39,4 @@ restore:
   home_placeholder: '{{HOME}}'
   payload_root: payload/home
   application_install_mode: online-selective
-  profile_version: '0.2'
+  profile_version: '0.2.9'

@@ -27,3 +27,10 @@ Use **Linux ISO - Suret** in Calamares-facing product text while keeping technic
 ## Acceptance test
 
 A source desktop containing customized Plasma panels, third-party widgets, a manually downloaded SVG/PNG icon, custom wallpaper/icon/cursor/font state, custom KWin additions and a styled terminal must install into a clean VM without manual desktop reconstruction.
+
+
+## v0.2.9 exit criteria before v0.3
+
+On the real KDE source machine: scan in active mode, verify with no errors, run portability
+for `ubuntu-26.04-kde`, and confirm only enabled user KWin scripts/effects are bundled.
+After that, capture/verification behavior is frozen for the first QEMU/KVM ISO cycle.

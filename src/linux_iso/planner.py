@@ -168,6 +168,10 @@ def audit(profile: Path) -> str:
         if widget.get("package"):
             suffix.append(f"package={widget.get('provider')}:{widget.get('package')}")
         suffix.append(f"bundled={'yes' if widget.get('bundled') else 'no'}")
+        if widget.get("plasma_api_minimum_version"):
+            suffix.append(f"plasma-min={widget.get('plasma_api_minimum_version')}")
+        if widget.get("external_qml_imports"):
+            suffix.append("external-qml=" + ",".join(widget.get("external_qml_imports", [])))
         lines.append(f"- {widget.get('id')}: {widget.get('source')} ({', '.join(suffix)})")
 
     lines.extend(["", "Active KDE appearance components", "--------------------------------"])

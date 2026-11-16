@@ -9,12 +9,15 @@ from typing import Iterable
 
 import yaml
 
+from linux_iso import __version__
 from linux_iso.assets import find_referenced_assets, sha256_file
 from linux_iso.desktop.kde import (
     active_kde_components,
+    active_kwin_user_components,
     component_locations,
     existing_kde_paths,
     package_owner,
+    plasmoid_runtime_details,
     ownership_probe,
     icon_theme_inheritance_chain,
     referenced_widgets,
@@ -225,8 +228,6 @@ def _active_only_always_roots(home: Path) -> list[Path]:
         home / ".local/share/fonts",
         home / ".fonts",
         home / ".local/share/applications",
-        home / ".local/share/kwin/scripts",
-        home / ".local/share/kwin/effects",
         home / ".local/share/kwin/tabbox",
         home / ".local/share/icons/hicolor",
     ]
@@ -270,6 +271,7 @@ def _promoted_reference_root(src: Path, home: Path) -> Path | None:
 
 def _expanded_active_components(home: Path) -> list[dict[str, object]]:
     components: list[dict[str, object]] = [dict(item) for item in active_kde_components(home)]
+    components.extend(dict(item) for item in active_kwin_user_components(home))
     seen = {(str(item["kind"]), str(item["name"])) for item in components}
     active_icons = [item for item in components if item.get("kind") == "icon-theme"]
     for item in active_icons:
@@ -303,7 +305,7 @@ def capture_profile(
 
     desktop_name, desktop_version = detect_desktop()
     if desktop_name != "kde-plasma":
-        raise CaptureError(f"v0.2.8 currently supports KDE Plasma; detected: {desktop_name}")
+        raise CaptureError(f"v{__version__} currently supports KDE Plasma; detected: {desktop_name}")
 
     if output.exists():
         shutil.rmtree(output)
@@ -330,7 +332,7 @@ def capture_profile(
     local_plasmoids = user_plasmoids(home)
     active_components = _expanded_active_components(home)
 
-    # v0.2.8 defaults to active-only capture. Full mode is retained for diagnostics
+    # Active-only capture is the default. Full mode is retained for diagnostics
     # and backwards-compatible "capture everything installed" behaviour.
     reference_roots: list[Path] = list(configs + terminal_paths)
     if asset_mode == "all":
@@ -355,12 +357,14 @@ def capture_profile(
                     _copy_local_entry(local_path, payload_home, home, "plasmoid", excluded)
                 )
             reference_roots.append(local_path)
+            runtime = plasmoid_runtime_details(local_path)
             widget_details.append(
                 {
                     "id": plugin_id,
                     "source": "user-local",
                     "bundled": True,
                     "bundle_root": _portable_home_path(local_path, home),
+                    **runtime,
                 }
             )
             continue
@@ -420,6 +424,8 @@ def capture_profile(
             if inherited:
                 detail["inherited"] = True
                 detail["inherited_from"] = component.get("inherited_from")
+            if component.get("config_id"):
+                detail["config_id"] = component.get("config_id")
             component_details.append(detail)
             continue
 
@@ -529,7 +535,7 @@ def capture_profile(
         "notes": [
             "Known key/credential stores are not captured.",
             "Possible secrets in shell startup files are redacted.",
-            "Files larger than 64 MiB are excluded from profile payload in v0.2.8.",
+            f"Files larger than 64 MiB are excluded from profile payload in v{__version__}.",
         ],
     }
 
@@ -544,7 +550,7 @@ def capture_profile(
             "home_placeholder": "{{HOME}}",
             "payload_root": "payload/home",
             "application_install_mode": "online-selective",
-            "profile_version": "0.2.8",
+            "profile_version": __version__,
             "asset_mode": asset_mode,
         },
     )

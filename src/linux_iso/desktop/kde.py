@@ -68,6 +68,57 @@ TERMINAL_FILES = [
 PLUGIN_RE = re.compile(r"^plugin\s*=\s*(.+?)\s*$", re.MULTILINE)
 
 
+QML_IMPORT_RE = re.compile(r"^\s*import\s+([A-Za-z_][A-Za-z0-9_.]*)", re.MULTILINE)
+
+
+def plasmoid_runtime_details(path: Path) -> dict[str, object]:
+    """Collect lightweight runtime metadata for a bundled Plasma widget.
+
+    Plasma 6 widgets are self-contained KPackage directories, but their QML may
+    import additional modules. We preserve the full widget bundle and record
+    import hints so portability checks can flag unusual external runtimes without
+    pretending to map every QML module to a distro package.
+    """
+    metadata_path = path / "metadata.json"
+    metadata: dict[str, object] = {}
+    if metadata_path.is_file():
+        try:
+            raw = json.loads(metadata_path.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, json.JSONDecodeError):
+            raw = {}
+        if isinstance(raw, dict):
+            metadata = raw
+
+    imports: set[str] = set()
+    if path.is_dir():
+        try:
+            qml_files = list(path.rglob("*.qml"))
+        except OSError:
+            qml_files = []
+        for qml in qml_files:
+            try:
+                text = qml.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            imports.update(QML_IMPORT_RE.findall(text))
+
+    # Qt and KDE namespaces are expected to be supplied by the Plasma runtime.
+    # Anything else is not necessarily broken, but deserves a portability hint.
+    external = sorted(
+        module for module in imports
+        if not (module.startswith("Qt") or module.startswith("org.kde."))
+    )
+    plugin = metadata.get("KPlugin") if isinstance(metadata, dict) else None
+    plugin = plugin if isinstance(plugin, dict) else {}
+    return {
+        "qml_imports": sorted(imports),
+        "external_qml_imports": external,
+        "plasma_api_minimum_version": metadata.get("X-Plasma-API-Minimum-Version") if isinstance(metadata, dict) else None,
+        "kpackage_structure": metadata.get("KPackageStructure") if isinstance(metadata, dict) else None,
+        "widget_version": plugin.get("Version") if isinstance(plugin, dict) else None,
+    }
+
+
 def existing_kde_paths(home: Path) -> tuple[list[Path], list[Path], list[Path]]:
     configs = [home / p for p in KDE_CONFIG_FILES if (home / p).exists()]
     data = [home / p for p in KDE_DATA_PATHS if (home / p).exists()]
@@ -301,6 +352,55 @@ def _resolve_named_entry(root: Path, name: str, *, file_suffix: str | None = Non
     return matches
 
 
+
+
+def active_kwin_user_components(home: Path) -> list[dict[str, str]]:
+    """Return enabled user-installed KWin scripts/effects.
+
+    KWin records enabled plugins in the [Plugins] group of kwinrc as
+    <pluginId>Enabled=true. We intentionally return only user-local packages
+    here; built-in/system effects are part of the base desktop and should not
+    inflate the portable profile.
+    """
+    path = home / ".config/kwinrc"
+    if not path.is_file():
+        return []
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    parser.optionxform = str
+    try:
+        parser.read(path, encoding="utf-8")
+    except (OSError, configparser.Error):
+        return []
+    if not parser.has_section("Plugins"):
+        return []
+
+    enabled: list[str] = []
+    for key, value in parser.items("Plugins"):
+        if not key.endswith("Enabled"):
+            continue
+        if value.strip().casefold() not in {"1", "true", "yes", "on"}:
+            continue
+        plugin_id = key[:-7].strip()
+        if plugin_id:
+            enabled.append(plugin_id)
+
+    result: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    specs = [
+        ("kwin-script", home / ".local/share/kwin/scripts"),
+        ("kwin-effect", home / ".local/share/kwin/effects"),
+    ]
+    for plugin_id in sorted(set(enabled), key=str.casefold):
+        for kind, root in specs:
+            for match in _resolve_named_entry(root, plugin_id):
+                token = (kind, match.name)
+                if token in seen:
+                    continue
+                seen.add(token)
+                result.append({"kind": kind, "name": match.name, "config_id": plugin_id})
+    return result
+
+
 def component_locations(home: Path, kind: str, name: str) -> tuple[list[Path], list[tuple[Path, Path]]]:
     """Return (user-local paths, system path -> target-relative-path mappings).
 
@@ -379,6 +479,17 @@ def component_locations(home: Path, kind: str, name: str) -> tuple[list[Path], l
         user_roots = [home / ".config/Kvantum", home / ".local/share/Kvantum"]
         system_roots = [Path("/usr/local/share/Kvantum"), Path("/usr/share/Kvantum")]
         target_root = Path(".config/Kvantum")
+        user = [p for root in user_roots for p in _resolve_named_entry(root, name)]
+        system = [
+            (p, target_root / p.name)
+            for root in system_roots
+            for p in _resolve_named_entry(root, name)
+        ]
+    elif kind in {"kwin-script", "kwin-effect"}:
+        leaf = "scripts" if kind == "kwin-script" else "effects"
+        user_roots = [home / ".local/share/kwin" / leaf]
+        system_roots = [Path("/usr/local/share/kwin") / leaf, Path("/usr/share/kwin") / leaf]
+        target_root = Path(".local/share/kwin") / leaf
         user = [p for root in user_roots for p in _resolve_named_entry(root, name)]
         system = [
             (p, target_root / p.name)

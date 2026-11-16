@@ -66,3 +66,12 @@ APT/Pacman/DNF/Zypper identity is retained rather than pretending package names 
 ## Security
 
 Known credential locations are excluded, likely shell secrets are redacted and very large files are excluded. A later public-export workflow should add a second secret scan over the final staged profile.
+
+
+## Portability gate (v0.2.9)
+
+`verify` answers whether the captured profile is internally complete and untampered.
+`portability` answers whether that verified profile is suitable for a selected ISO recipe.
+The second gate checks package-family compatibility, surfaces unusual widget QML runtime
+imports, records active user KWin plugins, and carries verification warnings forward.
+KIWI staging writes the result to `PORTABILITY.txt`.
