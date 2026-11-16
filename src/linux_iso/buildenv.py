@@ -100,6 +100,9 @@ def build_host_report() -> BuildHostReport:
     if kiwi_boxbuild and podman and kvm_ok:
         recommended = "boxbuild"
         checks.append("Boxbuild mode: standalone kiwi-boxbuild")
+        checks.append("Standalone kiwi-boxbuild does not require host python3-kiwi or kiwi-systemdeps-boxbuild")
+        if not qemu:
+            warnings.append("QEMU is not installed on the host; ISO build can proceed, but local boot testing is unavailable.")
     elif kiwi_ng and podman and qemu and kvm_ok:
         recommended = "boxbuild"
         checks.append("Boxbuild mode: kiwi-ng system boxbuild")
@@ -110,7 +113,7 @@ def build_host_report() -> BuildHostReport:
     else:
         blockers.append(
             "No usable KIWI build backend was found. On Pardus 25 run "
-            "./scripts/install-build-deps-pardus.sh, or install kiwi-ng + podman + QEMU manually."
+            "./scripts/install-build-deps-pardus.sh. The preferred path is standalone kiwi-boxbuild + podman."
         )
 
     if kiwi_boxbuild and not podman:

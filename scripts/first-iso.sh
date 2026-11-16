@@ -18,10 +18,10 @@ printf '\n== 2/6 profile verification ==\n'
 uv run linux-iso verify "$PROFILE"
 
 printf '\n== 3/6 portability ==\n'
-uv run linux-iso portability "$PROFILE" --recipe "$RECIPE" -o "$HOME/linux-iso-portability-v031.txt"
+uv run linux-iso portability "$PROFILE" --recipe "$RECIPE" -o "$HOME/linux-iso-portability-v032.txt"
 
 printf '\n== 4/6 build host ==\n'
-if uv run linux-iso build-doctor | tee "$HOME/linux-iso-build-doctor-v031.txt"; then
+if uv run linux-iso build-doctor | tee "$HOME/linux-iso-build-doctor-v032.txt"; then
   HOST_READY=1
 else
   HOST_READY=0
