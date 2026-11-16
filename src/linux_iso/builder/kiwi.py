@@ -204,7 +204,7 @@ def _write_config_xml(destination: Path, recipe: BaseRecipe, manifest: dict[str,
     ET.SubElement(description, "specification").text = "Linux ISO — Nakş personalized KDE Plasma live image"
 
     preferences = ET.SubElement(root, "preferences")
-    ET.SubElement(preferences, "version").text = "0.2.0"
+    ET.SubElement(preferences, "version").text = "0.2.3"
     ET.SubElement(preferences, "packagemanager").text = "apt"
     ET.SubElement(preferences, "locale").text = "en_US"
     ET.SubElement(preferences, "timezone").text = "UTC"
@@ -304,7 +304,7 @@ def generate_kiwi_project(
     required = _required_base_packages(manifest)
     marker = destination / "README-BUILDER.txt"
     marker.write_text(
-        "Linux ISO — Nakş v0.2 KIWI project\n"
+        "Linux ISO — Nakş v0.2.3 KIWI project\n"
         f"Recipe: {recipe.id}\n"
         f"Appearance packages embedded in base image: {len(required)}\n"
         "Run ./build.sh on a KIWI NG build host.\n"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import configparser
+import json
 import re
 from pathlib import Path
 
@@ -191,38 +192,193 @@ def active_kde_components(home: Path) -> list[dict[str, str]]:
             continue
         seen.add(token)
         result.append({"kind": kind, "name": value})
+
+    # Aurorae stores the selected decoration in kwinrc with a synthetic prefix.
+    # Preserve the actual package/theme name so it can be resolved and bundled.
+    decoration = _read_ini_value(
+        home / ".config/kwinrc", "org.kde.kdecoration2", "theme"
+    )
+    if decoration:
+        prefix = "__aurorae__svg__"
+        name = decoration[len(prefix):] if decoration.startswith(prefix) else decoration
+        token = ("window-decoration", name)
+        if token not in seen:
+            seen.add(token)
+            result.append({"kind": "window-decoration", "name": name})
     return result
 
 
+def _component_aliases(path: Path) -> set[str]:
+    """Return identifiers/names advertised by a KDE package directory or file."""
+    aliases = {path.name, path.stem}
+
+    metadata_json = path / "metadata.json" if path.is_dir() else None
+    if metadata_json and metadata_json.is_file():
+        try:
+            data = json.loads(metadata_json.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+        plugin = data.get("KPlugin") if isinstance(data, dict) else None
+        if isinstance(plugin, dict):
+            for key in ("Id", "Name"):
+                value = plugin.get(key)
+                if isinstance(value, str) and value.strip():
+                    aliases.add(value.strip())
+
+    metadata_desktop = path / "metadata.desktop" if path.is_dir() else None
+    if metadata_desktop and metadata_desktop.is_file():
+        parser = configparser.ConfigParser(interpolation=None, strict=False)
+        parser.optionxform = str
+        try:
+            parser.read(metadata_desktop, encoding="utf-8")
+        except (OSError, configparser.Error):
+            pass
+        else:
+            if parser.has_section("Desktop Entry"):
+                for key in ("X-KDE-PluginInfo-Name", "Name"):
+                    value = parser.get("Desktop Entry", key, fallback="").strip()
+                    if value:
+                        aliases.add(value)
+
+    index_theme = path / "index.theme" if path.is_dir() else None
+    if index_theme and index_theme.is_file():
+        parser = configparser.ConfigParser(interpolation=None, strict=False)
+        parser.optionxform = str
+        try:
+            parser.read(index_theme, encoding="utf-8")
+        except (OSError, configparser.Error):
+            pass
+        else:
+            for section in ("Icon Theme", "Desktop Entry"):
+                if parser.has_section(section):
+                    value = parser.get(section, "Name", fallback="").strip()
+                    if value:
+                        aliases.add(value)
+
+    return aliases
+
+
+def _normalized_component_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.casefold())
+
+
+def _resolve_named_entry(root: Path, name: str, *, file_suffix: str | None = None) -> list[Path]:
+    """Resolve a KDE component by directory/file name and then by metadata alias.
+
+    KDE configs often store the package Id while third-party themes can live in a
+    directory with a different name (for example a reverse-domain folder whose
+    metadata advertises Id=Nordic). Exact path matching alone therefore misses
+    otherwise valid user-local packages.
+    """
+    if not root.is_dir():
+        return []
+
+    target = _normalized_component_name(name)
+    matches: list[Path] = []
+
+    exact_name = name if file_suffix is None or name.endswith(file_suffix) else f"{name}{file_suffix}"
+    exact = root / exact_name
+    if exact.exists():
+        matches.append(exact)
+
+    try:
+        entries = sorted(root.iterdir(), key=lambda p: p.name.casefold())
+    except OSError:
+        return matches
+
+    for entry in entries:
+        if entry in matches:
+            continue
+        if file_suffix is None and not entry.is_dir():
+            continue
+        if file_suffix is not None and (not entry.is_file() or entry.suffix != file_suffix):
+            continue
+        if any(_normalized_component_name(alias) == target for alias in _component_aliases(entry)):
+            matches.append(entry)
+    return matches
+
+
 def component_locations(home: Path, kind: str, name: str) -> tuple[list[Path], list[tuple[Path, Path]]]:
-    """Return (user-local paths, system path -> target-relative-path mappings)."""
+    """Return (user-local paths, system path -> target-relative-path mappings).
+
+    v0.2.2 resolves third-party KDE packages by metadata Id/Name as well as by
+    their on-disk directory name, avoiding false `not-found` results for global
+    themes such as Nordic.
+    """
     if kind in {"icon-theme", "cursor-theme"}:
-        user = [home / ".local/share/icons" / name, home / ".icons" / name]
+        user_roots = [home / ".local/share/icons", home / ".icons"]
+        system_roots = [Path("/usr/local/share/icons"), Path("/usr/share/icons")]
+        target_root = Path(".local/share/icons")
+        user = [p for root in user_roots for p in _resolve_named_entry(root, name)]
         system = [
-            (Path("/usr/local/share/icons") / name, Path(".local/share/icons") / name),
-            (Path("/usr/share/icons") / name, Path(".local/share/icons") / name),
+            (p, target_root / p.name)
+            for root in system_roots
+            for p in _resolve_named_entry(root, name)
         ]
-    elif kind == "look-and-feel" or kind == "splash-theme":
-        user = [home / ".local/share/plasma/look-and-feel" / name]
+    elif kind in {"look-and-feel", "splash-theme"}:
+        user_roots = [home / ".local/share/plasma/look-and-feel"]
+        system_roots = [
+            Path("/usr/local/share/plasma/look-and-feel"),
+            Path("/usr/share/plasma/look-and-feel"),
+        ]
+        target_root = Path(".local/share/plasma/look-and-feel")
+        user = [p for root in user_roots for p in _resolve_named_entry(root, name)]
         system = [
-            (Path("/usr/local/share/plasma/look-and-feel") / name, Path(".local/share/plasma/look-and-feel") / name),
-            (Path("/usr/share/plasma/look-and-feel") / name, Path(".local/share/plasma/look-and-feel") / name),
+            (p, target_root / p.name)
+            for root in system_roots
+            for p in _resolve_named_entry(root, name)
+        ]
+    elif kind == "window-decoration":
+        user_specs = [
+            (home / ".local/share/aurorae/themes", Path(".local/share/aurorae/themes")),
+            (home / ".local/share/kwin/decorations", Path(".local/share/kwin/decorations")),
+        ]
+        system_specs = [
+            (Path("/usr/local/share/aurorae/themes"), Path(".local/share/aurorae/themes")),
+            (Path("/usr/share/aurorae/themes"), Path(".local/share/aurorae/themes")),
+            (Path("/usr/local/share/kwin/decorations"), Path(".local/share/kwin/decorations")),
+            (Path("/usr/share/kwin/decorations"), Path(".local/share/kwin/decorations")),
+        ]
+        user = [
+            p
+            for root, _target in user_specs
+            for p in _resolve_named_entry(root, name)
+        ]
+        system = [
+            (p, target_root / p.name)
+            for root, target_root in system_specs
+            for p in _resolve_named_entry(root, name)
         ]
     elif kind == "plasma-theme":
-        user = [home / ".local/share/plasma/desktoptheme" / name]
+        user_roots = [home / ".local/share/plasma/desktoptheme"]
+        system_roots = [
+            Path("/usr/local/share/plasma/desktoptheme"),
+            Path("/usr/share/plasma/desktoptheme"),
+        ]
+        target_root = Path(".local/share/plasma/desktoptheme")
+        user = [p for root in user_roots for p in _resolve_named_entry(root, name)]
         system = [
-            (Path("/usr/local/share/plasma/desktoptheme") / name, Path(".local/share/plasma/desktoptheme") / name),
-            (Path("/usr/share/plasma/desktoptheme") / name, Path(".local/share/plasma/desktoptheme") / name),
+            (p, target_root / p.name)
+            for root in system_roots
+            for p in _resolve_named_entry(root, name)
         ]
     elif kind == "color-scheme":
-        filename = name if name.endswith(".colors") else f"{name}.colors"
-        user = [home / ".local/share/color-schemes" / filename]
+        user_roots = [home / ".local/share/color-schemes"]
+        system_roots = [Path("/usr/local/share/color-schemes"), Path("/usr/share/color-schemes")]
+        target_root = Path(".local/share/color-schemes")
+        user = [p for root in user_roots for p in _resolve_named_entry(root, name, file_suffix=".colors")]
         system = [
-            (Path("/usr/local/share/color-schemes") / filename, Path(".local/share/color-schemes") / filename),
-            (Path("/usr/share/color-schemes") / filename, Path(".local/share/color-schemes") / filename),
+            (p, target_root / p.name)
+            for root in system_roots
+            for p in _resolve_named_entry(root, name, file_suffix=".colors")
         ]
     else:
         return [], []
+
+    # Keep deterministic ordering and remove duplicates while preserving the first
+    # (usually exact-name) match.
+    user = list(dict.fromkeys(user))
+    system = list(dict.fromkeys(system))
     return user, system
 
 

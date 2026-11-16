@@ -4,9 +4,21 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.2.1
+## Current milestone: v0.2.3
 
 The current implementation targets **KDE Plasma** and already contains the capture, profile, installer-catalog and ISO-project generation layers.
+
+### v0.2.3 audit-driven fixes
+
+- Aurorae window-decoration trees are grouped as theme bundles in `audit` instead of appearing as standalone files
+- active Aurorae decoration selection is detected from `kwinrc` and resolved as a portable KDE component
+- a missing `LookAndFeelPackage` is reported as a missing global-theme meta package rather than a fatal missing appearance asset; active subcomponents remain authoritative
+- user-local icon/theme trees are summarized as bundles in `audit` instead of printing hundreds of SVG files one-by-one
+- one-off referenced assets (for example a manually selected ChatGPT PNG icon) remain individually visible
+- native package classification no longer treats `microcode` as VS Code-like development software or `libfishcamp` as a Fish-shell appearance package
+- runtimes/libraries/hardware packages such as `*-microcode`, `lib*`, `*-dev`, `python3-*` and `gcc-*-base` stay in the manifest but are hidden from the application chooser
+- KDE look-and-feel resolution now checks package metadata Id/Name, not only the on-disk directory name, so third-party themes such as `Nordic` can be found when their folder name differs
+- Flatpak/native `.desktop` categories are used when available to improve installer categories
 
 ### Captured into the profile
 
@@ -54,7 +66,7 @@ uv sync
 uv run linux-iso --help
 ```
 
-`uv sync` creates/updates the project environment and installs the project in editable mode. `uv run` automatically checks the lockfile/environment before executing the command. On the first connected sync, uv generates `uv.lock`; commit that file so dependency resolution stays reproducible across developer machines.
+`uv sync` creates/updates the project environment and installs the project in editable mode. `uv run` automatically checks the lockfile/environment before executing the command. On the first connected sync, uv generates/updates `uv.lock`; commit that file so dependency resolution stays reproducible across developer machines.
 
 If this checkout was previously set up with manual `python3 -m venv`, a one-time clean migration is recommended:
 
@@ -67,7 +79,7 @@ uv sync
 ## 1. Capture the current KDE Plasma system
 
 ```bash
-linux-iso scan -o ~/linux-iso-profile
+uv run linux-iso scan -o ~/linux-iso-profile
 ```
 
 The resulting portable profile has this shape:
@@ -88,8 +100,8 @@ Source-home references such as `/home/taha/Pictures/icon.svg` are rewritten to `
 ## 2. Inspect and audit
 
 ```bash
-linux-iso inspect ~/linux-iso-profile
-linux-iso audit ~/linux-iso-profile
+uv run linux-iso inspect ~/linux-iso-profile
+uv run linux-iso audit ~/linux-iso-profile
 ```
 
 `audit` reports captured custom assets, widget origins, appearance dependencies, selectable applications, filtered native packages and security exclusions.
@@ -99,19 +111,19 @@ linux-iso audit ~/linux-iso-profile
 Dry run:
 
 ```bash
-linux-iso restore ~/linux-iso-profile --target-home /home/testuser
+uv run linux-iso restore ~/linux-iso-profile --target-home /home/testuser
 ```
 
 Apply:
 
 ```bash
-linux-iso restore ~/linux-iso-profile --target-home /home/testuser --apply
+uv run linux-iso restore ~/linux-iso-profile --target-home /home/testuser --apply
 ```
 
 ## 4. Generate the categorized application catalog
 
 ```bash
-linux-iso catalog ~/linux-iso-profile -o application-catalog.json
+uv run linux-iso catalog ~/linux-iso-profile -o application-catalog.json
 ```
 
 Current categories are Internet, Communication, Office, Multimedia, Development, Gaming, System Tools and Other Applications.
@@ -121,7 +133,7 @@ Current categories are Internet, Communication, Office, Multimedia, Development,
 The first concrete recipe is **Ubuntu 26.04 LTS + KDE Plasma/Kubuntu + Calamares**:
 
 ```bash
-linux-iso stage-iso ~/linux-iso-profile -o ~/linux-iso-build
+uv run linux-iso stage-iso ~/linux-iso-profile -o ~/linux-iso-build
 ```
 
 This produces a KIWI NG project containing:
@@ -145,7 +157,7 @@ cd ~/linux-iso-build
 ./build.sh
 ```
 
-The current repository stages a complete build description, but **v0.2.1 is still experimental until the generated ISO is built and boot/install-tested in QEMU/KVM**. Do not write an unvalidated image to production machines.
+The current repository stages a complete build description, but **v0.2.3 is still experimental until the generated ISO is built and boot/install-tested in QEMU/KVM**. Do not write an unvalidated image to production machines.
 
 ## Installer behavior
 
@@ -173,7 +185,7 @@ Clean base system
 
 ## Supported scope
 
-| Area | v0.2.1 |
+| Area | v0.2.3 |
 |---|---|
 | KDE Plasma capture | Yes |
 | custom SVG/PNG referenced from user config | Yes |

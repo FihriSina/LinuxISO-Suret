@@ -18,6 +18,75 @@ def _visible_optional(packages: list[dict]) -> list[dict]:
     ]
 
 
+
+def _asset_bundle(item: dict) -> tuple[str, str, str] | None:
+    """Return (bundle_kind, bundle_name, portable_root) for known asset trees."""
+    destination = str(item.get("destination") or "")
+    prefix = "{{HOME}}/"
+    if not destination.startswith(prefix):
+        return None
+    rel = destination[len(prefix):]
+    parts = rel.split("/")
+
+    grouped_roots = {
+        (".local", "share", "plasma", "plasmoids"): "plasmoid",
+        (".local", "share", "plasma", "desktoptheme"): "plasma-theme",
+        (".local", "share", "plasma", "look-and-feel"): "look-and-feel",
+        (".local", "share", "plasma", "layout-templates"): "plasma-layout",
+        (".local", "share", "aurorae", "themes"): "window-decoration",
+        (".local", "share", "wallpapers"): "wallpaper",
+        (".local", "share", "themes"): "theme",
+        (".themes",): "theme",
+        (".local", "share", "icons"): "icon-theme",
+        (".icons",): "icon-theme",
+        (".local", "share", "kwin", "scripts"): "kwin-script",
+        (".local", "share", "kwin", "effects"): "kwin-effect",
+        (".local", "share", "kwin", "tabbox"): "kwin-tabbox",
+        (".local", "share", "kwin", "decorations"): "kwin-decoration",
+        (".local", "share", "konsole"): "konsole-profile",
+    }
+
+    for root_parts, kind in grouped_roots.items():
+        if tuple(parts[: len(root_parts)]) != root_parts:
+            continue
+        if len(parts) <= len(root_parts):
+            return None
+        name = parts[len(root_parts)]
+        root = "{{HOME}}/" + "/".join((*root_parts, name))
+        return kind, name, root
+
+    single_roots = {
+        (".local", "share", "fonts"): ("font-collection", "user-fonts"),
+        (".fonts",): ("font-collection", "user-fonts"),
+        (".local", "share", "applications"): ("desktop-launchers", "user-launchers"),
+        (".local", "share", "color-schemes"): ("color-schemes", "user-color-schemes"),
+    }
+    for root_parts, (kind, name) in single_roots.items():
+        if tuple(parts[: len(root_parts)]) == root_parts:
+            root = "{{HOME}}/" + "/".join(root_parts)
+            return kind, name, root
+    return None
+
+
+def _group_assets(assets: list[dict]) -> tuple[list[dict], list[dict]]:
+    bundles: dict[tuple[str, str, str], int] = {}
+    standalone: list[dict] = []
+    for item in assets:
+        bundle = _asset_bundle(item)
+        # One-off references outside managed desktop trees stay individually visible.
+        if bundle is None or item.get("kind") == "referenced-asset":
+            standalone.append(item)
+            continue
+        bundles[bundle] = bundles.get(bundle, 0) + 1
+
+    grouped = [
+        {"kind": kind, "name": name, "root": root, "files": count}
+        for (kind, name, root), count in bundles.items()
+    ]
+    grouped.sort(key=lambda x: (x["kind"], x["name"].casefold()))
+    standalone.sort(key=lambda x: str(x.get("destination", "")).casefold())
+    return grouped, standalone
+
 def summarize(profile: Path) -> str:
     manifest = load_manifest(profile)
     desktop = manifest["desktop"]
@@ -60,16 +129,30 @@ def audit(profile: Path) -> str:
         "Linux ISO — Nakş profile audit",
         "=" * 31,
         "",
-        "Appearance assets",
-        "-----------------",
+        "Appearance asset bundles",
+        "------------------------",
     ]
     assets = desktop.get("custom_assets", [])
-    if not assets:
+    bundles, standalone = _group_assets(assets)
+    if not bundles:
+        lines.append("(none grouped)")
+    for bundle in bundles:
+        lines.append(
+            f"- {bundle['kind']}={bundle['name']}: {bundle['files']} files "
+            f"({bundle['root']})"
+        )
+
+    lines.extend(["", "Standalone / referenced assets", "----------------------------"])
+    if not standalone:
         lines.append("(none captured)")
-    for item in assets:
+    for item in standalone:
         lines.append(
             f"- {item.get('kind', 'asset')}: {item.get('source')} -> {item.get('destination')}"
         )
+    lines.append(
+        f"Total: {len(assets)} asset files; {len(bundles)} grouped bundles; "
+        f"{len(standalone)} standalone entries."
+    )
 
     lines.extend(["", "Plasma widgets", "--------------"])
     details = desktop.get("widget_details", [])
@@ -92,6 +175,8 @@ def audit(profile: Path) -> str:
         if component.get("package"):
             suffix.append(f"package={component.get('provider')}:{component.get('package')}")
         suffix.append(f"bundled={'yes' if component.get('bundled') else 'no'}")
+        if component.get("note"):
+            suffix.append(f"note={component.get('note')}")
         lines.append(
             f"- {component.get('kind')}={component.get('name')}: "
             f"{component.get('source')} ({', '.join(suffix)})"

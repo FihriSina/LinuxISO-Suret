@@ -192,7 +192,7 @@ def capture_profile(output: Path, home: Path | None = None) -> Manifest:
 
     desktop_name, desktop_version = detect_desktop()
     if desktop_name != "kde-plasma":
-        raise CaptureError(f"v0.2 currently supports KDE Plasma; detected: {desktop_name}")
+        raise CaptureError(f"v0.2.3 currently supports KDE Plasma; detected: {desktop_name}")
 
     if output.exists():
         shutil.rmtree(output)
@@ -296,9 +296,20 @@ def capture_profile(output: Path, home: Path | None = None) -> Manifest:
 
         system_entry = next((item for item in system_paths if item[0].exists()), None)
         if system_entry is None:
-            component_details.append(
-                {"kind": kind, "name": name, "source": "not-found", "bundled": False}
-            )
+            if kind == "look-and-feel":
+                component_details.append(
+                    {
+                        "kind": kind,
+                        "name": name,
+                        "source": "missing-meta-package",
+                        "bundled": False,
+                        "note": "global theme package is absent; active subcomponents are captured separately",
+                    }
+                )
+            else:
+                component_details.append(
+                    {"kind": kind, "name": name, "source": "not-found", "bundled": False}
+                )
             continue
 
         system_path, target_relative = system_entry
@@ -343,7 +354,7 @@ def capture_profile(output: Path, home: Path | None = None) -> Manifest:
         "notes": [
             "Known key/credential stores are not captured.",
             "Possible secrets in shell startup files are redacted.",
-            "Files larger than 64 MiB are excluded from profile payload in v0.2.",
+            "Files larger than 64 MiB are excluded from profile payload in v0.2.3.",
         ],
     }
 
@@ -358,7 +369,7 @@ def capture_profile(output: Path, home: Path | None = None) -> Manifest:
             "home_placeholder": "{{HOME}}",
             "payload_root": "payload/home",
             "application_install_mode": "online-selective",
-            "profile_version": "0.2",
+            "profile_version": "0.2.3",
         },
     )
 
