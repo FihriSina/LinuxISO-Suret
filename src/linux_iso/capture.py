@@ -303,7 +303,7 @@ def capture_profile(
 
     desktop_name, desktop_version = detect_desktop()
     if desktop_name != "kde-plasma":
-        raise CaptureError(f"v0.2.7 currently supports KDE Plasma; detected: {desktop_name}")
+        raise CaptureError(f"v0.2.8 currently supports KDE Plasma; detected: {desktop_name}")
 
     if output.exists():
         shutil.rmtree(output)
@@ -330,7 +330,7 @@ def capture_profile(
     local_plasmoids = user_plasmoids(home)
     active_components = _expanded_active_components(home)
 
-    # v0.2.7 defaults to active-only capture. Full mode is retained for diagnostics
+    # v0.2.8 defaults to active-only capture. Full mode is retained for diagnostics
     # and backwards-compatible "capture everything installed" behaviour.
     reference_roots: list[Path] = list(configs + terminal_paths)
     if asset_mode == "all":
@@ -433,6 +433,20 @@ def capture_profile(
                     "bundled": False,
                     "note": "global theme package is absent; active subcomponents are captured separately",
                 }
+            elif kind == "icon-theme" and inherited:
+                # Freedesktop icon themes can name compatibility/fallback themes
+                # which are not installed as a standalone directory on newer
+                # desktops. The source machine already renders successfully, so
+                # an unresolved inherited fallback is informative rather than
+                # fatal. Keep it in the manifest so verification/audit can report
+                # the portability caveat without rejecting the profile.
+                detail = {
+                    "kind": kind,
+                    "name": name,
+                    "source": "missing-inherited-fallback",
+                    "bundled": False,
+                    "note": "declared by icon-theme inheritance but not installed as a standalone theme",
+                }
             else:
                 detail = {"kind": kind, "name": name, "source": "not-found", "bundled": False}
             if inherited:
@@ -515,7 +529,7 @@ def capture_profile(
         "notes": [
             "Known key/credential stores are not captured.",
             "Possible secrets in shell startup files are redacted.",
-            "Files larger than 64 MiB are excluded from profile payload in v0.2.7.",
+            "Files larger than 64 MiB are excluded from profile payload in v0.2.8.",
         ],
     }
 
@@ -530,7 +544,7 @@ def capture_profile(
             "home_placeholder": "{{HOME}}",
             "payload_root": "payload/home",
             "application_install_mode": "online-selective",
-            "profile_version": "0.2.5",
+            "profile_version": "0.2.8",
             "asset_mode": asset_mode,
         },
     )

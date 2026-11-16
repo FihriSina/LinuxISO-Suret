@@ -4,11 +4,13 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.2.7
+## Current milestone: v0.2.8
 
 The current implementation targets **KDE Plasma** and contains the capture, verification, restore, application-catalog and experimental ISO-project generation layers.
 
-### v0.2.7: active-only capture + verification + uv environment hardening
+### v0.2.8: active-only capture + verification + inherited icon fallback handling
+
+Unresolved inherited icon compatibility themes (for example `AdwaitaLegacy`) are now reported as verification warnings instead of fatal errors. Directly active themes still fail verification when unresolved.
 
 - default capture mode is now `active`: installed-but-unused theme collections are not copied wholesale
 - `--asset-mode all` retains the old diagnostic/full user-asset capture behavior
@@ -173,7 +175,7 @@ Clean base system
 
 ## Supported scope
 
-| Area | v0.2.7 |
+| Area | v0.2.8 |
 |---|---|
 | KDE Plasma capture | Yes |
 | active-only appearance capture | Yes |
@@ -199,7 +201,7 @@ Cross-family native package translation is intentionally blocked. A Pacman profi
 
 A source Plasma desktop with customized panels, third-party plasmoids, manually downloaded icons, a custom wallpaper, cursor/theme/font set, KWin additions and a styled terminal must install into a clean VM without manual desktop reconstruction. Optional applications should appear only when selected during installation.
 
-## Development environment diagnostics (v0.2.7)
+## Development environment diagnostics (v0.2.8)
 
 `uv` manages the project environment. The project explicitly enables the `dev`
 dependency group, which contains pytest.

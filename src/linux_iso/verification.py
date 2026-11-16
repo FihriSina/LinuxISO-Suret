@@ -132,11 +132,32 @@ def verify_profile(profile: Path) -> VerificationResult:
         label = f"{component.get('kind')}={component.get('name')}"
         source = component.get("source")
         if source == "not-found":
+            # Backward compatibility for profiles captured before v0.2.8: an
+            # unresolved *inherited* icon fallback used to be serialized as a
+            # generic not-found component. It is not equivalent to the directly
+            # active icon theme being missing, so downgrade only this precise
+            # legacy case to a warning.
+            if component.get("kind") == "icon-theme" and component.get("inherited"):
+                parent = component.get("inherited_from")
+                suffix = f" (inherited from {parent})" if parent else ""
+                warnings.append(
+                    f"Inherited icon fallback is not installed as a standalone theme: {label}{suffix}; "
+                    "the captured active theme and remaining fallback chain will be used."
+                )
+                continue
             errors.append(f"Active appearance component could not be resolved: {label}")
             continue
         if source == "missing-meta-package":
             warnings.append(
                 f"Global theme meta-package is absent for {label}; captured subcomponents will be used."
+            )
+            continue
+        if source == "missing-inherited-fallback":
+            parent = component.get("inherited_from")
+            suffix = f" (inherited from {parent})" if parent else ""
+            warnings.append(
+                f"Inherited icon fallback is not installed as a standalone theme: {label}{suffix}; "
+                "the captured active theme and remaining fallback chain will be used."
             )
             continue
         if component.get("bundled"):

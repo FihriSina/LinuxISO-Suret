@@ -38,3 +38,11 @@ Those are the v0.3 acceptance gates.
 - Tests run with `uv run --dev python -m pytest -q` rather than depending on the generated `pytest` console script.
 - `linux-iso doctor` distinguishes an importable pytest module from a missing console entry point.
 - `scripts/repair-env.sh` recreates the project `.venv` deterministically.
+
+
+## v0.2.8 inherited icon fallback handling
+
+- Unresolved inherited icon themes are recorded as `missing-inherited-fallback`.
+- Verification reports them as warnings rather than fatal errors.
+- Direct active appearance components still fail verification when unresolved.
+- Profile version metadata is synchronized to 0.2.8.
