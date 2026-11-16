@@ -7,6 +7,7 @@ from pathlib import Path
 from linux_iso.branding import PRODUCT_NAME
 from linux_iso.builder.kiwi import BuilderError, RECIPES, generate_kiwi_project
 from linux_iso.capture import CaptureError, capture_profile
+from linux_iso.diagnostics import doctor_report
 from linux_iso.installer.catalog import write_catalog
 from linux_iso.planner import audit, summarize
 from linux_iso.restore import RestoreError, restore_profile
@@ -54,6 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     kiwi.add_argument("--recipe", choices=sorted(RECIPES), default="ubuntu-26.04-kde")
 
     sub.add_parser("recipes", help="List available base ISO recipes")
+    sub.add_parser("doctor", help="Diagnose the local Python/uv development environment")
     return parser
 
 
@@ -101,6 +103,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "recipes":
             for recipe_id in sorted(RECIPES):
                 print(recipe_id)
+            return 0
+        if args.command == "doctor":
+            print(doctor_report())
             return 0
     except (CaptureError, RestoreError, BuilderError, FileNotFoundError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)

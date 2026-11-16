@@ -313,7 +313,7 @@ def generate_kiwi_project(
     required = _required_base_packages(manifest)
     marker = destination / "README-BUILDER.txt"
     marker.write_text(
-        f"{PRODUCT_NAME} v0.2.5 KIWI project\n"
+        f"{PRODUCT_NAME} v0.2.6 KIWI project\n"
         f"Recipe: {recipe.id}\n"
         f"Appearance packages embedded in base image: {len(required)}\n"
         "Run ./build.sh on a KIWI NG build host.\n"

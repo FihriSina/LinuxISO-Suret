@@ -198,3 +198,23 @@ Cross-family native package translation is intentionally blocked. A Pacman profi
 ## Next acceptance target
 
 A source Plasma desktop with customized panels, third-party plasmoids, manually downloaded icons, a custom wallpaper, cursor/theme/font set, KWin additions and a styled terminal must install into a clean VM without manual desktop reconstruction. Optional applications should appear only when selected during installation.
+
+## Development environment diagnostics (v0.2.6)
+
+`uv` manages the project environment. The project explicitly enables the `dev`
+dependency group, which contains pytest.
+
+```bash
+uv sync --dev
+uv run linux-iso doctor
+uv run --dev pytest -q
+```
+
+For a reproducible local test command, use:
+
+```bash
+./scripts/test.sh
+```
+
+The helper clears `UV_NO_DEV` and `UV_NO_DEFAULT_GROUPS` for the test process,
+then explicitly syncs and runs the development dependency group.
