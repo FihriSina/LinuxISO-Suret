@@ -1,3 +1,14 @@
+# Status
+
+## v0.3.14 implemented
+
+- Added a custom KIWI GRUB template: BIOS (`grub_platform=pc`) uses `linux16`/`initrd16`; UEFI keeps `linux`/`initrd`.
+- Removed `gfxpayload=keep` from the custom live boot path to avoid carrying a fragile BIOS display handoff.
+- Added `plasma-session-x11`, `kwin-x11`, and `xorg` to the Ubuntu 26.04 KDE image recipe.
+- Live SDDM now forces X11 and autologins `live` to `plasmax11`.
+- QEMU helper now defaults to Q35, standard VGA, GTK without GL, and conservative TCG CPU settings when KVM is unavailable.
+- Regression coverage verifies all v0.3.14 boot/session changes.
+
 # Development status
 
 ## v0.3.13 implemented

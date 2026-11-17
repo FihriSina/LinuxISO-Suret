@@ -46,7 +46,8 @@ def test_v037_kiwi_11116_bootloader_is_child_element(tmp_path: Path):
     assert "bootloader" not in image_type.attrib
     bootloader = image_type.find("./bootloader")
     assert bootloader is not None
-    assert bootloader.attrib == {"name": "grub2"}
+    assert bootloader.attrib["name"] == "grub2"
+    assert bootloader.attrib.get("grub_template") == "grub-live-safe.cfg.tmpl"
 
 
 def test_v037_generated_xml_matches_documented_iso_shape(tmp_path: Path):

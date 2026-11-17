@@ -87,6 +87,9 @@ UBUNTU_2604_KDE = BaseRecipe(
         "kiwi-dracut-live",
         "grub-pc-bin",
         "grub-efi-amd64-bin",
+        "plasma-session-x11",
+        "kwin-x11",
+        "xorg",
         "python3",
         "sudo",
         "network-manager",
@@ -284,7 +287,11 @@ def _write_config_xml(destination: Path, recipe: BaseRecipe, manifest: dict[str,
             "filesystem": "squashfs",
         },
     )
-    ET.SubElement(image_type, "bootloader", {"name": "grub2"})
+    ET.SubElement(
+        image_type,
+        "bootloader",
+        {"name": "grub2", "grub_template": "grub-live-safe.cfg.tmpl"},
+    )
 
     users = ET.SubElement(root, "users")
     ET.SubElement(
@@ -355,6 +362,39 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
     )
     installer.chmod(0o755)
 
+    grub_template = destination / "grub-live-safe.cfg.tmpl"
+    grub_template.write_text(
+        "# Linux ISO - Suret BIOS-safe live boot template\n"
+        "search ${search_params}\n"
+        "set default=${default_boot}\n"
+        "set timeout=${boot_timeout}\n"
+        "set timeout_style=${boot_timeout_style}\n"
+        "if [ -n \"$${iso_path}\" ]; then\n"
+        "  isoboot=\"iso-scan/filename=$${iso_path}\"\n"
+        "fi\n"
+        "terminal_input ${terminal_input}\n"
+        "terminal_output ${terminal_output}\n"
+        "\n"
+        "menuentry \"${title}\" --class os --unrestricted {\n"
+        "  echo Loading kernel...\n"
+        "  if [ \"$${grub_platform}\" = \"pc\" ]; then\n"
+        "    insmod linux16\n"
+        "    linux16 ($$root)${bootpath}/${kernel_file} $${isoboot} ${boot_options}\n"
+        "    echo Loading initrd...\n"
+        "    initrd16 ($$root)${bootpath}/${initrd_file}\n"
+        "  else\n"
+        "    linux ($$root)${bootpath}/${kernel_file} $${isoboot} ${boot_options}\n"
+        "    echo Loading initrd...\n"
+        "    initrd ($$root)${bootpath}/${initrd_file}\n"
+        "  fi\n"
+        "}\n"
+        "\n"
+        "menuentry \"Boot from Hard Disk\" --class os --unrestricted {\n"
+        "  exit\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
     config_sh = destination / "config.sh"
     config_sh.write_text(
         "#!/bin/bash\n"
@@ -364,9 +404,12 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         "python3 /usr/lib/linux-iso/apply-live-profile.py\n"
         "install -d -m 0755 /etc/sddm.conf.d\n"
         "cat > /etc/sddm.conf.d/99-linux-iso-live.conf <<'EOF'\n"
+        "[General]\n"
+        "DisplayServer=x11\n"
+        "\n"
         "[Autologin]\n"
         "User=live\n"
-        "Session=plasma\n"
+        "Session=plasmax11\n"
         "Relogin=true\n"
         "EOF\n"
         "install -d -m 0755 /etc/sudoers.d\n"
@@ -487,11 +530,12 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         "if [ -z \"${ISO:-}\" ]; then echo \"No ISO found under $RESULT\" >&2; exit 2; fi\n"
         "QEMU=$(command -v qemu-system-x86_64 || command -v qemu-kvm || true)\n"
         "if [ -z \"$QEMU\" ]; then echo 'qemu-system-x86_64 not found' >&2; exit 2; fi\n"
-        "ACCEL='-accel tcg'\n"
+        "MACHINE='-machine q35'\n"
+        "ACCEL='-accel tcg,thread=single -cpu max,la57=off'\n"
         "if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then ACCEL='-enable-kvm -cpu host'; fi\n"
         "echo \"Booting: $ISO\"\n"
-        "exec $QEMU $ACCEL -m ${LINUX_ISO_QEMU_MEMORY:-4096} -smp ${LINUX_ISO_QEMU_CPUS:-2} "
-        "-boot d -cdrom \"$ISO\" -device virtio-vga -display gtk -no-reboot\n",
+        "exec $QEMU $MACHINE $ACCEL -m ${LINUX_ISO_QEMU_MEMORY:-4096} -smp ${LINUX_ISO_QEMU_CPUS:-2} "
+        "-boot d -cdrom \"$ISO\" -vga std -display gtk,gl=off -no-reboot\n",
         encoding="utf-8",
     )
     qemu_sh.chmod(0o755)

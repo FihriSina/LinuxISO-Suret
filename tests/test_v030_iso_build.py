@@ -69,7 +69,7 @@ def test_v030_staging_creates_live_session_and_build_helpers(tmp_path: Path):
 
     config = (destination / "config.sh").read_text(encoding="utf-8")
     assert "User=live" in config
-    assert "Session=plasma" in config
+    assert "Session=plasmax11" in config
     assert "linux-iso-installer.desktop" in config
 
     build = (destination / "build.sh").read_text(encoding="utf-8")
