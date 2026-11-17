@@ -60,3 +60,5 @@ def test_v037_generated_xml_matches_documented_iso_shape(tmp_path: Path):
     assert image_type.attrib["primary"] == "true"
     assert image_type.attrib["flags"] == "overlay"
     assert image_type.attrib["filesystem"] == "squashfs"
+    assert image_type.attrib["firmware"] == "efi"
+    assert image_type.attrib["gpt_hybrid_mbr"] == "true"

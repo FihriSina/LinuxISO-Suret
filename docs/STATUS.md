@@ -1,5 +1,13 @@
 # Status
 
+## v0.3.15 implemented
+
+- ISO firmware is explicitly `efi` so KIWI creates the x86_64 EFI boot path instead of the previous BIOS-only default.
+- `gpt_hybrid_mbr=true` keeps the generated ISO suitable for both UEFI and legacy BIOS/CSM layouts where supported.
+- QEMU validation now uses OVMF/UEFI by default; `LINUX_ISO_QEMU_FIRMWARE=bios` remains available for legacy testing.
+- Plasma X11 live-session fallback from v0.3.14 is retained.
+- Regression coverage verifies UEFI/hybrid recipe generation and the OVMF test launcher.
+
 ## v0.3.14 implemented
 
 - Added a custom KIWI GRUB template: BIOS (`grub_platform=pc`) uses `linux16`/`initrd16`; UEFI keeps `linux`/`initrd`.

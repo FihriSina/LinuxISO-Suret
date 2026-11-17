@@ -1,4 +1,4 @@
-# Next milestone - v0.3.14 first ISO artifact and VM validation
+# Next milestone - v0.3.15 UEFI live boot and installer validation
 
 ## Highest priority: prove the ISO
 
@@ -37,3 +37,11 @@ After that, capture/verification behavior is frozen for the first QEMU/KVM ISO c
 
 ## v0.3.14 next check
 - Re-run the container build and confirm the bootstrap proceeds past APT package download into image configuration.
+
+
+## v0.3.15 validation target
+
+1. Build the ISO with the `firmware=efi` hybrid recipe.
+2. Boot it through OVMF using the generated `test-qemu.sh`.
+3. Confirm the live Plasma X11 desktop appears automatically.
+4. Launch Calamares and complete installation in a clean VM.

@@ -285,6 +285,8 @@ def _write_config_xml(destination: Path, recipe: BaseRecipe, manifest: dict[str,
             "primary": "true",
             "flags": "overlay",
             "filesystem": "squashfs",
+            "firmware": "efi",
+            "gpt_hybrid_mbr": "true",
         },
     )
     ET.SubElement(
@@ -522,20 +524,32 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
 
     qemu_sh = destination / "test-qemu.sh"
     qemu_sh.write_text(
-        "#!/bin/sh\n"
-        "set -eu\n"
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
         "HERE=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
         "RESULT=${1:-${LINUX_ISO_RESULT_DIR:-${HERE}-result}}\n"
         "ISO=$(find \"$RESULT\" -maxdepth 2 -type f -name '*.iso' -print | sort | tail -n 1)\n"
         "if [ -z \"${ISO:-}\" ]; then echo \"No ISO found under $RESULT\" >&2; exit 2; fi\n"
         "QEMU=$(command -v qemu-system-x86_64 || command -v qemu-kvm || true)\n"
         "if [ -z \"$QEMU\" ]; then echo 'qemu-system-x86_64 not found' >&2; exit 2; fi\n"
-        "MACHINE='-machine q35'\n"
-        "ACCEL='-accel tcg,thread=single -cpu max,la57=off'\n"
-        "if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then ACCEL='-enable-kvm -cpu host'; fi\n"
-        "echo \"Booting: $ISO\"\n"
-        "exec $QEMU $MACHINE $ACCEL -m ${LINUX_ISO_QEMU_MEMORY:-4096} -smp ${LINUX_ISO_QEMU_CPUS:-2} "
-        "-boot d -cdrom \"$ISO\" -vga std -display gtk,gl=off -no-reboot\n",
+        "ACCEL=(-accel tcg,thread=single -cpu max,la57=off)\n"
+        "if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then ACCEL=(-enable-kvm -cpu host); fi\n"
+        "FIRMWARE=${LINUX_ISO_QEMU_FIRMWARE:-uefi}\n"
+        "ARGS=(-machine q35 \"${ACCEL[@]}\" -m \"${LINUX_ISO_QEMU_MEMORY:-4096}\" -smp \"${LINUX_ISO_QEMU_CPUS:-2}\" -boot d -cdrom \"$ISO\" -vga std -display gtk,gl=off -no-reboot)\n"
+        "if [ \"$FIRMWARE\" = uefi ]; then\n"
+        "  CODE=\"\"; VARS=\"\"\n"
+        "  for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd; do [ -f \"$f\" ] && CODE=\"$f\" && break; done\n"
+        "  for f in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd; do [ -f \"$f\" ] && VARS=\"$f\" && break; done\n"
+        "  if [ -z \"$CODE\" ] || [ -z \"$VARS\" ]; then echo 'OVMF UEFI firmware not found. Install the ovmf package or set LINUX_ISO_QEMU_FIRMWARE=bios.' >&2; exit 3; fi\n"
+        "  VARS_COPY=$(mktemp --tmpdir suret-OVMF-VARS.XXXXXX.fd)\n"
+        "  trap 'rm -f \"$VARS_COPY\"' EXIT INT TERM\n"
+        "  cp \"$VARS\" \"$VARS_COPY\"\n"
+        "  ARGS+=(-drive \"if=pflash,format=raw,readonly=on,file=$CODE\" -drive \"if=pflash,format=raw,file=$VARS_COPY\")\n"
+        "elif [ \"$FIRMWARE\" != bios ]; then\n"
+        "  echo \"Unknown LINUX_ISO_QEMU_FIRMWARE: $FIRMWARE (use uefi or bios)\" >&2; exit 2\n"
+        "fi\n"
+        "echo \"Booting ($FIRMWARE): $ISO\"\n"
+        "\"$QEMU\" \"${ARGS[@]}\"\n",
         encoding="utf-8",
     )
     qemu_sh.chmod(0o755)
