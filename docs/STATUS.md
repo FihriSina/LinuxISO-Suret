@@ -1,16 +1,20 @@
 # Development status
 
-## v0.3.2 implemented
+## v0.3.10 implemented
+
+- Added `kiwi-dracut-live` to the Ubuntu 26.04 image package set so KIWI can create the live ISO initrd.
 
 - first executable KIWI ISO build pipeline (`build-doctor`, `build-iso`, staged `build.sh`)
-- Pardus/unvalidated hosts prefer boxbuild; direct KIWI remains a fallback
-- standalone `kiwi-boxbuild` and core `kiwi-ng system boxbuild` are supported
+- Pardus prefers the direct Podman KIWI container backend; VM boxbuild/host-direct KIWI remain fallbacks
+- the direct container backend avoids both the large first-run QCOW2 VM-box download and the `kiwi.service` orchestration path; standalone `kiwi-boxbuild` remains a fallback
 - live user creation, SDDM autologin and desktop Calamares launcher are generated
 - captured profile is applied to the live KDE session during KIWI configuration
 - direct KIWI builds resolve the package list before image creation
+- generated builds use `systemd-inhibit` to block only system sleep/suspend during long builds; desktop idle/lock is untouched
 - `test-qemu.sh` boots a generated ISO with KVM or TCG fallback
 - recipe-level target Plasma compatibility check for bundled widgets
 - Calamares patch helper is self-contained inside the image
+- KIWI 11.1.x ISO recipe uses a child `<bootloader name="grub2"/>` element instead of the removed `bootloader=` type attribute
 
 ## v0.2.9 implemented
 
@@ -42,7 +46,7 @@
 - Calamares installation into a disposable virtual disk
 - post-install Plasma fidelity comparison
 
-Those are now the active v0.3.2 real-system acceptance gates.
+Those are now the active v0.3.10 real-system acceptance gates.
 
 
 ## v0.2.7 environment hardening
@@ -68,3 +72,25 @@ Those are now the active v0.3.2 real-system acceptance gates.
 - Non-Qt/KDE QML imports are surfaced as portability warnings.
 - KIWI staging emits `PORTABILITY.txt` and refuses portability blockers.
 - Scanner/verification work is intended to freeze after real-system v0.2.9 validation; v0.3 moves to boot/install testing.
+
+### Session-safety refinement
+
+- Added `scripts/safe-first-iso.sh` with a transient `org.freedesktop.ScreenSaver` inhibitor.
+- The inhibitor is automatically released on normal exit, Ctrl+C, or termination.
+- No persistent KDE screen-lock configuration is modified.
+- QEMU remains manual after the ISO build.
+- Display diagnostics now include current/previous boot kernel DRM, AMDGPU and NVIDIA events.
+
+## v0.3.10 build/schema gate
+
+- KIWI description and result directories are siblings, never nested.
+- A successful backend exit without an `.iso` is treated as a build failure.
+- A KIWI `image info` preflight log is written before starting boxbuild.
+- Container boxbuild runs with debug logging for the next real-system diagnosis.
+- Generated KIWI XML has a regression test for the ISO bootloader element shape.
+
+## v0.3.10 Ubuntu archive trust bootstrap
+
+- The source workstation remains Pardus 25 + KDE Plasma; Ubuntu 26.04 KDE is only the current target image base.
+- Every Ubuntu APT repository now supplies Canonical's official Ubuntu archive keyring URL to KIWI via the repository signing-key element.
+- This fixes the bootstrap failure caused by missing Ubuntu Archive Automatic Signing Key `871920D1991BC93C` in the isolated build container.

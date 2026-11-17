@@ -1,9 +1,9 @@
-# Next milestone - v0.3.0 first ISO build and VM validation
+# Next milestone - v0.3.10 first ISO artifact and VM validation
 
 ## Highest priority: prove the ISO
 
 1. Run `linux-iso verify` on a real active-only KDE profile.
-2. Run `linux-iso build-doctor` and select boxbuild/direct backend.
+2. Run `linux-iso build-doctor` and prefer the direct Podman container backend and fall back to VM/host-direct backends.
 3. Run `linux-iso build-iso` for the Ubuntu 26.04 KDE recipe.
 4. Boot the resulting ISO with generated `test-qemu.sh`.
 5. Install with Calamares to a disposable virtual disk.

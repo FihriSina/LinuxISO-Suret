@@ -25,6 +25,7 @@ class AptRepository:
     url: str
     distribution: str
     components: str
+    signing_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -49,18 +50,21 @@ UBUNTU_2604_KDE = BaseRecipe(
             "https://archive.ubuntu.com/ubuntu",
             "resolute",
             "main restricted universe multiverse",
+            "https://archive.ubuntu.com/ubuntu/project/ubuntu-archive-keyring.gpg",
         ),
         AptRepository(
             "ubuntu-updates",
             "https://archive.ubuntu.com/ubuntu",
             "resolute-updates",
             "main restricted universe multiverse",
+            "https://archive.ubuntu.com/ubuntu/project/ubuntu-archive-keyring.gpg",
         ),
         AptRepository(
             "ubuntu-security",
             "https://security.ubuntu.com/ubuntu",
             "resolute-security",
             "main restricted universe multiverse",
+            "https://archive.ubuntu.com/ubuntu/project/ubuntu-archive-keyring.gpg",
         ),
     ),
     bootstrap_packages=(
@@ -79,6 +83,7 @@ UBUNTU_2604_KDE = BaseRecipe(
         "kubuntu-desktop",
         "calamares",
         "calamares-settings-kubuntu",
+        "kiwi-dracut-live",
         "python3",
         "sudo",
         "network-manager",
@@ -266,7 +271,7 @@ def _write_config_xml(destination: Path, recipe: BaseRecipe, manifest: dict[str,
     ET.SubElement(preferences, "packagemanager").text = "apt"
     ET.SubElement(preferences, "locale").text = "en_US"
     ET.SubElement(preferences, "timezone").text = "UTC"
-    ET.SubElement(
+    image_type = ET.SubElement(
         preferences,
         "type",
         {
@@ -274,9 +279,9 @@ def _write_config_xml(destination: Path, recipe: BaseRecipe, manifest: dict[str,
             "primary": "true",
             "flags": "overlay",
             "filesystem": "squashfs",
-            "bootloader": "grub2",
         },
     )
+    ET.SubElement(image_type, "bootloader", {"name": "grub2"})
 
     users = ET.SubElement(root, "users")
     ET.SubElement(
@@ -305,7 +310,9 @@ def _write_config_xml(destination: Path, recipe: BaseRecipe, manifest: dict[str,
                 "distribution": repo.distribution,
             },
         )
-        ET.SubElement(node, "source", {"path": repo.url})
+        source = ET.SubElement(node, "source", {"path": repo.url})
+        if repo.signing_key:
+            ET.SubElement(source, "signing", {"key": repo.signing_key})
 
     bootstrap = ET.SubElement(root, "packages", {"type": "bootstrap"})
     for name in recipe.bootstrap_packages:
@@ -384,31 +391,85 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
 
     build_sh = destination / "build.sh"
     build_sh.write_text(
-        "#!/bin/sh\n"
-        "set -eu\n"
+        "#!/usr/bin/env bash\n"
+        "set -Eeuo pipefail\n"
         "HERE=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
-        "OUT=${1:-$HERE/build-result}\n"
+        "OUT=${1:-${LINUX_ISO_RESULT_DIR:-${HERE}-result}}\n"
         "BACKEND=${LINUX_ISO_BUILD_BACKEND:-auto}\n"
+        f"BOX=${{LINUX_ISO_BOX:-{recipe.preferred_box}}}\n"
+        "KIWI_VERSION=${LINUX_ISO_KIWI_VERSION:-11.1.16}\n"
+        "NICE_LEVEL=${LINUX_ISO_NICE_LEVEL:-10}\n"
+        "IO_NICE_LEVEL=${LINUX_ISO_IO_NICE_LEVEL:-7}\n"
+        "case \"$OUT/\" in \"$HERE/\"*) echo \"Refusing nested KIWI target dir: $OUT (description: $HERE)\" >&2; echo \"Use a sibling result directory, for example: ${HERE}-result\" >&2; exit 2;; esac\n"
         "mkdir -p \"$OUT\"\n"
+        "if [ \"${LINUX_ISO_INHIBITED:-0}\" != 1 ] && [ \"${LINUX_ISO_KEEP_AWAKE:-1}\" = 1 ] && command -v systemd-inhibit >/dev/null 2>&1; then\n"
+        "  exec systemd-inhibit --what=sleep --mode=block --why='Linux ISO - Suret build' env LINUX_ISO_INHIBITED=1 \"$0\" \"$@\"\n"
+        "fi\n"
+        "BUILD_LOG=${LINUX_ISO_BUILD_LOG:-$OUT/build-session.log}\n"
+        "RESOURCE_LOG=${LINUX_ISO_RESOURCE_LOG:-$OUT/resource-monitor.log}\n"
+        "exec > >(tee -a \"$BUILD_LOG\") 2>&1\n"
+        "echo \"[$(date -Is)] Linux ISO - Suret build starting\"\n"
+        "echo \"Build log: $BUILD_LOG\"\n"
+        "echo \"Resource log: $RESOURCE_LOG\"\n"
+        "echo 'Validating KIWI description before starting the build box...'\n"
+        "uv tool run --from \"kiwi==$KIWI_VERSION\" kiwi-ng --logfile stdout image info --description \"$HERE\" > \"$OUT/kiwi-preflight.log\" 2>&1 || { cat \"$OUT/kiwi-preflight.log\" >&2; echo 'KIWI description preflight failed.' >&2; exit 7; }\n"
+        "cat \"$OUT/kiwi-preflight.log\"\n"
+        "if [ \"${LINUX_ISO_MONITOR_RESOURCES:-1}\" = 1 ]; then\n"
+        "  (while true; do { echo \"[$(date -Is)]\"; grep -E '^(MemTotal|MemAvailable|SwapTotal|SwapFree):' /proc/meminfo || true; cat /proc/loadavg || true; df -h \"$OUT\" | tail -n 1 || true; echo; } >> \"$RESOURCE_LOG\"; sleep 60; done) &\n"
+        "  MONITOR_PID=$!\n"
+        "  trap 'kill \"$MONITOR_PID\" 2>/dev/null || true' EXIT INT TERM\n"
+        "fi\n"
         "if [ \"$BACKEND\" = auto ]; then\n"
-        "  if command -v kiwi-boxbuild >/dev/null 2>&1 && command -v podman >/dev/null 2>&1; then BACKEND=boxbuild;\n"
+        "  if command -v uv >/dev/null 2>&1 && command -v podman >/dev/null 2>&1; then BACKEND=container;\n"
+        "  elif command -v kiwi-boxbuild >/dev/null 2>&1 && command -v podman >/dev/null 2>&1; then BACKEND=boxbuild;\n"
         "  elif command -v kiwi-ng >/dev/null 2>&1 && command -v podman >/dev/null 2>&1 && { command -v qemu-system-x86_64 >/dev/null 2>&1 || command -v qemu-kvm >/dev/null 2>&1; }; then BACKEND=boxbuild;\n"
         "  elif command -v kiwi-ng >/dev/null 2>&1; then BACKEND=direct;\n"
         "  else echo 'No KIWI backend found. Run: linux-iso build-doctor' >&2; exit 2; fi\n"
         "fi\n"
         "echo \"Linux ISO - Suret build backend: $BACKEND\"\n"
-        "if [ \"$BACKEND\" = boxbuild ]; then\n"
-        f"  if command -v kiwi-boxbuild >/dev/null 2>&1; then exec kiwi-boxbuild --box {recipe.preferred_box} kiwi --description \"$HERE\" --target-dir \"$OUT\"; fi\n"
-        f"  if command -v kiwi-ng >/dev/null 2>&1; then exec kiwi-ng system boxbuild --box {recipe.preferred_box} kiwi --description \"$HERE\" --target-dir \"$OUT\"; fi\n"
-        "  echo 'boxbuild backend requested but neither kiwi-boxbuild nor kiwi-ng is available' >&2; exit 2\n"
+        "echo \"Build box: $BOX\"\n"
+        "if [ \"$BACKEND\" = container ]; then\n"
+        "  command -v uv >/dev/null 2>&1 || { echo 'uv is required for container backend' >&2; exit 2; }\n"
+        "  command -v podman >/dev/null 2>&1 || { echo 'podman is required for container backend' >&2; exit 2; }\n"
+        "  BOX_IMAGE=${LINUX_ISO_BOX_IMAGE:-registry.opensuse.org/virtualization/appliances/selfcontained/${BOX}/images/${BOX}:latest}\n"
+        "  echo \"Using direct KIWI container backend: $BOX_IMAGE\"\n"
+        "  echo 'This bypasses kiwi.service/systemd inside the box and runs kiwi-ng system build directly.'\n"
+        "  sudo mkdir -p /var/cache/kiwi\n"
+        "  sudo podman pull \"$BOX_IMAGE\"\n"
+        "  echo 'Checking kiwi-ng inside the build container...'\n"
+        "  sudo podman run --rm --entrypoint /usr/bin/kiwi-ng \"$BOX_IMAGE\" --version\n"
+        "  RC=0\n"
+        "  PODMAN_ARGS=(run --rm --privileged --net host --security-opt label=disable --cap-add AUDIT_WRITE --cap-add AUDIT_CONTROL --cap-add CAP_MKNOD --cap-add CAP_SYS_ADMIN --volume /var/cache/kiwi:/var/cache/kiwi --volume \"$HERE:/description:ro\" --volume \"$OUT:/result\" --volume /dev:/dev --entrypoint /usr/bin/kiwi-ng \"$BOX_IMAGE\" --debug --logfile stdout system build --description /description --target-dir /result)\n"
+        "  if command -v ionice >/dev/null 2>&1; then\n"
+        "    nice -n \"$NICE_LEVEL\" ionice -c 2 -n \"$IO_NICE_LEVEL\" sudo podman \"${PODMAN_ARGS[@]}\" || RC=$?\n"
+        "  else\n"
+        "    nice -n \"$NICE_LEVEL\" sudo podman \"${PODMAN_ARGS[@]}\" || RC=$?\n"
+        "  fi\n"
+        "  sudo chown -R \"$(id -u):$(id -g)\" \"$OUT\" 2>/dev/null || true\n"
+        "elif [ \"$BACKEND\" = boxbuild ]; then\n"
+        "  echo 'VM boxbuild fallback selected; first use downloads a large QCOW2 build box.'\n"
+        "  RC=0\n"
+        "  if command -v kiwi-boxbuild >/dev/null 2>&1; then kiwi-boxbuild --box \"$BOX\" kiwi --description \"$HERE\" --target-dir \"$OUT\" || RC=$?;\n"
+        "  elif command -v kiwi-ng >/dev/null 2>&1; then kiwi-ng --debug system boxbuild --box \"$BOX\" kiwi --description \"$HERE\" --target-dir \"$OUT\" || RC=$?;\n"
+        "  else echo 'boxbuild backend requested but neither kiwi-boxbuild nor kiwi-ng is available' >&2; exit 2; fi\n"
+        "elif [ \"$BACKEND\" = direct ]; then\n"
+        "  RC=0\n"
+        "  kiwi-ng image info --description \"$HERE\" --resolve-package-list > \"$OUT/package-resolution.txt\" || RC=$?\n"
+        "  if [ \"$RC\" -eq 0 ]; then KIWI=$(command -v kiwi-ng); sudo \"$KIWI\" --debug system build --description \"$HERE\" --target-dir \"$OUT\" || RC=$?; fi\n"
+        "else\n"
+        "  echo \"Unknown backend: $BACKEND\" >&2; exit 2\n"
         "fi\n"
-        "if [ \"$BACKEND\" = direct ]; then\n"
-        "  kiwi-ng image info --description \"$HERE\" --resolve-package-list > \"$OUT/package-resolution.txt\"\n"
-        "  KIWI=$(command -v kiwi-ng)\n"
-        "  exec sudo \"$KIWI\" system build --description \"$HERE\" --target-dir \"$OUT\"\n"
+        "if [ \"$RC\" -ne 0 ]; then echo \"KIWI backend failed with exit code $RC\" >&2; exit \"$RC\"; fi\n"
+        "ISO=$(find \"$OUT\" -maxdepth 3 -type f -name '*.iso' -print | sort | tail -n 1)\n"
+        "if [ -z \"${ISO:-}\" ]; then\n"
+        "  echo 'ERROR: KIWI backend exited successfully but no ISO artifact was created.' >&2\n"
+        "  echo \"Result directory: $OUT\" >&2\n"
+        "  find \"$OUT\" -maxdepth 3 -type f -printf '  %p  %s bytes\n' 2>/dev/null | sort >&2 || true\n"
+        "  if [ -s \"$OUT/build/image-root.log\" ]; then echo '--- KIWI image-root.log tail ---' >&2; tail -n 120 \"$OUT/build/image-root.log\" >&2; fi\n"
+        "  exit 6\n"
         "fi\n"
-        "echo \"Unknown backend: $BACKEND\" >&2\n"
-        "exit 2\n",
+        "echo \"ISO artifact: $ISO\"\n"
+        "exit 0\n",
         encoding="utf-8",
     )
     build_sh.chmod(0o755)
@@ -418,7 +479,7 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         "#!/bin/sh\n"
         "set -eu\n"
         "HERE=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
-        "RESULT=${1:-$HERE/build-result}\n"
+        "RESULT=${1:-${LINUX_ISO_RESULT_DIR:-${HERE}-result}}\n"
         "ISO=$(find \"$RESULT\" -maxdepth 2 -type f -name '*.iso' -print | sort | tail -n 1)\n"
         "if [ -z \"${ISO:-}\" ]; then echo \"No ISO found under $RESULT\" >&2; exit 2; fi\n"
         "QEMU=$(command -v qemu-system-x86_64 || command -v qemu-kvm || true)\n"
@@ -426,19 +487,27 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         "ACCEL='-accel tcg'\n"
         "if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then ACCEL='-enable-kvm -cpu host'; fi\n"
         "echo \"Booting: $ISO\"\n"
-        "exec $QEMU $ACCEL -m ${LINUX_ISO_QEMU_MEMORY:-6144} -smp ${LINUX_ISO_QEMU_CPUS:-4} "
-        "-boot d -cdrom \"$ISO\" -device virtio-vga -display gtk\n",
+        "exec $QEMU $ACCEL -m ${LINUX_ISO_QEMU_MEMORY:-4096} -smp ${LINUX_ISO_QEMU_CPUS:-2} "
+        "-boot d -cdrom \"$ISO\" -device virtio-vga -display gtk -no-reboot\n",
         encoding="utf-8",
     )
     qemu_sh.chmod(0o755)
 
 
 def _select_backend(requested: str = "auto") -> str:
-    if requested not in {"auto", "boxbuild", "direct"}:
+    if requested not in {"auto", "container", "boxbuild", "direct"}:
         raise BuilderError(f"Unknown build backend: {requested}")
+    if requested == "container":
+        if shutil.which("uv") is None:
+            raise BuilderError("uv is required for direct container build")
+        if shutil.which("podman") is None:
+            raise BuilderError("podman is required for direct container build")
+        return "container"
     if requested == "boxbuild":
         standalone = shutil.which("kiwi-boxbuild") is not None
-        core = shutil.which("kiwi-ng") is not None and (shutil.which("qemu-system-x86_64") is not None or shutil.which("qemu-kvm") is not None)
+        core = shutil.which("kiwi-ng") is not None and (
+            shutil.which("qemu-system-x86_64") is not None or shutil.which("qemu-kvm") is not None
+        )
         if shutil.which("podman") is None:
             raise BuilderError("podman is required for boxbuild")
         if not standalone and not core:
@@ -448,6 +517,8 @@ def _select_backend(requested: str = "auto") -> str:
         if shutil.which("kiwi-ng") is None:
             raise BuilderError("kiwi-ng is not installed")
         return "direct"
+    if shutil.which("uv") and shutil.which("podman"):
+        return "container"
     if shutil.which("podman") and (
         shutil.which("kiwi-boxbuild")
         or (shutil.which("kiwi-ng") and (shutil.which("qemu-system-x86_64") or shutil.which("qemu-kvm")))

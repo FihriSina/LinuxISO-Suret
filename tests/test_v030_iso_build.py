@@ -73,13 +73,23 @@ def test_v030_staging_creates_live_session_and_build_helpers(tmp_path: Path):
     assert "linux-iso-installer.desktop" in config
 
     build = (destination / "build.sh").read_text(encoding="utf-8")
-    assert "kiwi-boxbuild --box ubuntu" in build
+    assert "direct KIWI container backend" in build
+    assert "--entrypoint /usr/bin/kiwi-ng" in build
+    assert "system build --description /description --target-dir /result" in build
+    assert "systemd-inhibit --what=sleep --mode=block" in build
+    assert "sleep:idle" not in build
+    assert "build-session.log" in build
+    assert "resource-monitor.log" in build
+    assert "nice -n" in build
+    assert "ionice -c 2" in build
     assert "kiwi-ng image info" in build
     assert "--resolve-package-list" in build
 
     qemu = (destination / "test-qemu.sh").read_text(encoding="utf-8")
     assert "qemu-system-x86_64" in qemu
     assert "-cdrom" in qemu
+    assert "LINUX_ISO_QEMU_MEMORY:-4096" in qemu
+    assert "LINUX_ISO_QEMU_CPUS:-2" in qemu
 
 
 def test_portability_blocks_widget_newer_than_target_plasma(tmp_path: Path):
@@ -94,11 +104,11 @@ def test_build_host_report_prefers_boxbuild(monkeypatch, tmp_path: Path):
 
     monkeypatch.setattr(env, "parse_os_release", lambda: {"ID": "pardus", "PRETTY_NAME": "Pardus"})
     monkeypatch.setattr(env.platform, "machine", lambda: "x86_64")
-    monkeypatch.setattr(env, "_tool", lambda name: f"/usr/bin/{name}" if name in {"podman", "kiwi-boxbuild", "qemu-system-x86_64"} else None)
+    monkeypatch.setattr(env, "_tool", lambda name: f"/usr/bin/{name}" if name in {"uv", "podman", "kiwi-boxbuild", "qemu-system-x86_64"} else None)
     monkeypatch.setattr(env, "_kvm_accessible", lambda: (True, "/dev/kvm is readable and writable"))
     monkeypatch.setattr(env.shutil, "disk_usage", lambda _: types.SimpleNamespace(total=40 * 1024**3, used=10 * 1024**3, free=30 * 1024**3))
 
     report = build_host_report()
-    assert report.recommended_backend == "boxbuild"
+    assert report.recommended_backend == "container"
     assert report.ready is True
-    assert any("boxbuild is preferred" in item for item in report.warnings)
+    assert any("isolated container backend is preferred" in item for item in report.warnings)

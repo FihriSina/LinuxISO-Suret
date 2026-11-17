@@ -66,7 +66,7 @@ def build_parser() -> argparse.ArgumentParser:
     build_iso.add_argument("profile", type=Path)
     build_iso.add_argument("-o", "--output", type=Path, default=Path("./linux-iso-build"))
     build_iso.add_argument("--recipe", choices=sorted(RECIPES), default="ubuntu-26.04-kde")
-    build_iso.add_argument("--backend", choices=("auto", "boxbuild", "direct"), default="auto")
+    build_iso.add_argument("--backend", choices=("auto", "container", "boxbuild", "direct"), default="auto")
 
     sub.add_parser("recipes", help="List available base ISO recipes")
     sub.add_parser("doctor", help="Diagnose the local Python/uv development environment")

@@ -68,12 +68,14 @@ def build_host_report() -> BuildHostReport:
     blockers: list[str] = []
 
     podman = _tool("podman")
+    uv = _tool("uv")
     kiwi_boxbuild = _tool("kiwi-boxbuild")
     kiwi_ng = _tool("kiwi-ng")
     qemu = _tool("qemu-system-x86_64") or _tool("qemu-kvm")
     kvm_ok, kvm_text = _kvm_accessible()
 
     checks.append(f"podman: {podman or 'not found'}")
+    checks.append(f"uv: {uv or 'not found'}")
     checks.append(f"kiwi-boxbuild: {kiwi_boxbuild or 'not found'}")
     checks.append(f"kiwi-ng: {kiwi_ng or 'not found'}")
     checks.append(f"qemu: {qemu or 'not found'}")
@@ -93,11 +95,17 @@ def build_host_report() -> BuildHostReport:
     if not direct_supported:
         warnings.append(
             f"Direct KIWI builds are not treated as validated on host distro '{distro_id}'; "
-            "boxbuild is preferred for cross-distro isolation."
+            "the isolated container backend is preferred for cross-distro builds."
         )
 
     recommended: str | None = None
-    if kiwi_boxbuild and podman and kvm_ok:
+    if podman and uv:
+        recommended = "container"
+        checks.append("Direct KIWI container mode: official build box via Podman")
+        checks.append("Container mode runs kiwi-ng system build directly and avoids the VM/QCOW2 box path")
+        if not qemu:
+            warnings.append("QEMU is not installed on the host; ISO build can proceed, but local boot testing is unavailable.")
+    elif kiwi_boxbuild and podman and kvm_ok:
         recommended = "boxbuild"
         checks.append("Boxbuild mode: standalone kiwi-boxbuild")
         checks.append("Standalone kiwi-boxbuild does not require host python3-kiwi or kiwi-systemdeps-boxbuild")
@@ -113,14 +121,16 @@ def build_host_report() -> BuildHostReport:
     else:
         blockers.append(
             "No usable KIWI build backend was found. On Pardus 25 run "
-            "./scripts/install-build-deps-pardus.sh. The preferred path is standalone kiwi-boxbuild + podman."
+            "./scripts/install-build-deps-pardus.sh. Preferred path: uv + podman direct container build."
         )
 
+    if uv and not podman:
+        warnings.append("uv is present but Podman is missing; direct container build is unavailable.")
     if kiwi_boxbuild and not podman:
         warnings.append("kiwi-boxbuild is present but podman is missing.")
     if kiwi_ng and podman and not qemu:
         warnings.append("kiwi-ng + podman are present, but QEMU is missing for core boxbuild.")
-    if kiwi_boxbuild and not kvm_ok:
+    if recommended == "boxbuild" and kiwi_boxbuild and not kvm_ok:
         warnings.append("kiwi-boxbuild is present but KVM access is unavailable; VM boxbuild cannot use hardware acceleration.")
 
     return BuildHostReport(
