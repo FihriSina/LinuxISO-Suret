@@ -22,7 +22,7 @@ wheels = [
 
 [[package]]
 name = "linux-iso"
-version = "0.3.11"
+version = "0.3.13"
 source = { editable = "." }
 dependencies = [
     { name = "pyyaml" },

@@ -85,6 +85,8 @@ UBUNTU_2604_KDE = BaseRecipe(
         "calamares",
         "calamares-settings-kubuntu",
         "kiwi-dracut-live",
+        "grub-pc-bin",
+        "grub-efi-amd64-bin",
         "python3",
         "sudo",
         "network-manager",
