@@ -1,4 +1,4 @@
-# Next milestone - v0.3.10 first ISO artifact and VM validation
+# Next milestone - v0.3.12 first ISO artifact and VM validation
 
 ## Highest priority: prove the ISO
 
@@ -34,3 +34,6 @@ A source desktop containing customized Plasma panels, third-party widgets, a man
 On the real KDE source machine: scan in active mode, verify with no errors, run portability
 for `ubuntu-26.04-kde`, and confirm only enabled user KWin scripts/effects are bundled.
 After that, capture/verification behavior is frozen for the first QEMU/KVM ISO cycle.
+
+## v0.3.12 next check
+- Re-run the container build and confirm the bootstrap proceeds past APT package download into image configuration.

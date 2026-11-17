@@ -47,21 +47,21 @@ UBUNTU_2604_KDE = BaseRecipe(
     repositories=(
         AptRepository(
             "ubuntu",
-            "https://archive.ubuntu.com/ubuntu",
+            "http://archive.ubuntu.com/ubuntu",
             "resolute",
             "main restricted universe multiverse",
             "https://archive.ubuntu.com/ubuntu/project/ubuntu-archive-keyring.gpg",
         ),
         AptRepository(
             "ubuntu-updates",
-            "https://archive.ubuntu.com/ubuntu",
+            "http://archive.ubuntu.com/ubuntu",
             "resolute-updates",
             "main restricted universe multiverse",
             "https://archive.ubuntu.com/ubuntu/project/ubuntu-archive-keyring.gpg",
         ),
         AptRepository(
             "ubuntu-security",
-            "https://security.ubuntu.com/ubuntu",
+            "http://security.ubuntu.com/ubuntu",
             "resolute-security",
             "main restricted universe multiverse",
             "https://archive.ubuntu.com/ubuntu/project/ubuntu-archive-keyring.gpg",
@@ -79,6 +79,7 @@ UBUNTU_2604_KDE = BaseRecipe(
     ),
     image_packages=(
         "ca-certificates",
+        "locales-all",
         "linux-generic",
         "kubuntu-desktop",
         "calamares",
