@@ -87,6 +87,7 @@ UBUNTU_2604_KDE = BaseRecipe(
         "dosfstools",
         "e2fsprogs",
         "parted",
+        "rsync",
         "kiwi-dracut-live",
         "grub-pc-bin",
         "grub-efi-amd64-bin",

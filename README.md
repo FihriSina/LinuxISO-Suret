@@ -4,7 +4,14 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.3.17
+## Current milestone: v0.3.18
+
+
+### v0.3.18: Calamares rsync runtime fix
+
+- Adds `rsync` explicitly to the live ISO image.
+- Fixes Calamares `unpackfs` failure `rsync failed with error code 127`.
+- Keeps the v0.3.17 KIWI `LiveOS/squashfs.img` media-path fix and live-session safeguards.
 
 ### v0.3.17: Installer media-path and live-session fixes
 
