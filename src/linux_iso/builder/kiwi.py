@@ -93,6 +93,7 @@ UBUNTU_2604_KDE = BaseRecipe(
         "plasma-session-x11",
         "kwin-x11",
         "xorg",
+        "konsole",
         "python3",
         "sudo",
         "network-manager",
@@ -354,11 +355,45 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
     live_profile.write_text(LIVE_PROFILE_SCRIPT, encoding="utf-8")
     live_profile.chmod(0o755)
 
+    media_helper = destination / "root/usr/lib/linux-iso/prepare-calamares-media"
+    media_helper.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "mkdir -p /cdrom\n"
+        "if ! mountpoint -q /cdrom; then\n"
+        "  if [ -e /dev/disk/by-label/CDROM ]; then\n"
+        "    mount -o ro /dev/disk/by-label/CDROM /cdrom || true\n"
+        "  fi\n"
+        "fi\n"
+        "SOURCE=\"\"\n"
+        "for candidate in /cdrom/LiveOS/squashfs.img /run/initramfs/live/LiveOS/squashfs.img /run/initramfs/LiveOS/squashfs.img; do\n"
+        "  if [ -f \"$candidate\" ]; then SOURCE=\"$candidate\"; break; fi\n"
+        "done\n"
+        "if [ -z \"$SOURCE\" ]; then\n"
+        "  SOURCE=$(find /run /cdrom -maxdepth 6 -type f -path '*/LiveOS/squashfs.img' -print -quit 2>/dev/null || true)\n"
+        "fi\n"
+        "if [ -z \"$SOURCE\" ] || [ ! -f \"$SOURCE\" ]; then\n"
+        "  echo 'Linux ISO - Suret: could not locate KIWI LiveOS/squashfs.img' >&2\n"
+        "  exit 10\n"
+        "fi\n"
+        "cat > /etc/calamares/modules/unpackfs.conf <<EOF\n"
+        "---\n"
+        "unpack:\n"
+        "  - source: \"$SOURCE\"\n"
+        "    sourcefs: \"squashfs\"\n"
+        "    destination: \"\"\n"
+        "EOF\n"
+        "printf '%s\\n' \"Linux ISO - Suret Calamares source: $SOURCE\"\n",
+        encoding="utf-8",
+    )
+    media_helper.chmod(0o755)
+
     installer = destination / "root/usr/bin/linux-iso-installer"
     installer.parent.mkdir(parents=True, exist_ok=True)
     installer.write_text(
         "#!/bin/sh\n"
         "set -eu\n"
+        "sudo /usr/lib/linux-iso/prepare-calamares-media\n"
         "if command -v calamares-launch-normal >/dev/null 2>&1; then\n"
         "  exec sudo -E calamares-launch-normal\n"
         "fi\n"
@@ -426,6 +461,13 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         "touch /home/live/.local/bin/env\n"
         "chown live:users /home/live/.local/bin/env\n"
         "install -d -o live -g users -m 0755 /home/live/Desktop\n"
+        "install -d -o live -g users -m 0755 /home/live/.config\n"
+        "cat > /home/live/.config/kscreenlockerrc <<'EOF'\n"
+        "[Daemon]\n"
+        "Autolock=false\n"
+        "LockOnResume=false\n"
+        "Timeout=0\n"
+        "EOF\n"
         "cat > /home/live/Desktop/linux-iso-installer.desktop <<'EOF'\n"
         "[Desktop Entry]\n"
         "Type=Application\n"
