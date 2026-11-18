@@ -4,7 +4,16 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.3.19
+## Current milestone: v0.3.20
+
+
+### v0.3.20: Calamares runtime sequence hardening
+
+- Replaces the actual Kubuntu Calamares job instance `shellprocess@before_bootloader_kerncopy` with a Linux ISO - Suret-owned shellprocess instance.
+- Removes the distro-specific `contextualprocess@before_bootloader` job because the KIWI rootfs already carries the required bootloader packages.
+- Rewrites any remaining `/cdrom/casper/vmlinuz` and Casper squashfs references immediately before Calamares starts.
+- Launches Calamares directly after the Suret runtime patch so the Kubuntu launcher cannot restore distro-specific Casper assumptions.
+- Keeps a fallback kernel-copy config for older Calamares sequence layouts.
 
 ### v0.3.19: KIWI kernel handoff for Calamares
 
@@ -213,7 +222,7 @@ Clean base system
 
 ## Supported scope
 
-| Area | v0.3.19 |
+| Area | v0.3.20 |
 |---|---|
 | KDE Plasma capture | Yes |
 | active-only appearance capture | Yes |
@@ -240,7 +249,7 @@ Cross-family native package translation is intentionally blocked. A Pacman profi
 
 A source Plasma desktop with customized panels, third-party plasmoids, manually downloaded icons, a custom wallpaper, cursor/theme/font set, KWin additions and a styled terminal must install into a clean VM without manual desktop reconstruction. Optional applications should appear only when selected during installation.
 
-## Development environment diagnostics (v0.3.19)
+## Development environment diagnostics (v0.3.20)
 
 `uv` manages the project environment. The project explicitly enables the `dev`
 dependency group, which contains pytest.

@@ -173,6 +173,113 @@ if __name__ == "__main__":
 '''
 
 
+RUNTIME_CALAMARES_PATCH = r'''#!/usr/bin/env python3
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import yaml
+
+SETTINGS = Path("/etc/calamares/settings.conf")
+MODULES = Path("/etc/calamares/modules")
+
+
+def patch_text_configs(source: str, kernel: str) -> None:
+    replacements = {
+        "/cdrom/casper/filesystem.squashfs": source,
+        "/cdrom/casper/vmlinuz": kernel,
+    }
+    for base in (Path("/etc/calamares"), Path("/usr/share/calamares")):
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*.conf"):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            updated = text
+            for old, new in replacements.items():
+                updated = updated.replace(old, new)
+            if updated != text:
+                path.write_text(updated, encoding="utf-8")
+
+
+def patch_settings() -> None:
+    settings = yaml.safe_load(SETTINGS.read_text(encoding="utf-8")) or {}
+    instances = settings.setdefault("instances", [])
+    wanted = {
+        "id": "linuxiso_before_bootloader_kerncopy",
+        "module": "shellprocess",
+        "config": "linuxiso_before_bootloader_kerncopy.conf",
+    }
+    if not any(
+        isinstance(item, dict)
+        and item.get("module") == wanted["module"]
+        and item.get("id") == wanted["id"]
+        for item in instances
+    ):
+        instances.append(wanted)
+
+    for phase in settings.get("sequence", []):
+        if not isinstance(phase, dict) or not isinstance(phase.get("exec"), list):
+            continue
+        patched = []
+        for item in phase["exec"]:
+            if item == "shellprocess@before_bootloader_kerncopy":
+                item = "shellprocess@linuxiso_before_bootloader_kerncopy"
+            if item == "contextualprocess@before_bootloader":
+                continue
+            if item not in patched:
+                patched.append(item)
+        phase["exec"] = patched
+
+    SETTINGS.write_text(
+        yaml.safe_dump(settings, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+
+def main() -> None:
+    if len(sys.argv) != 3:
+        raise SystemExit("usage: patch-calamares-runtime.py SOURCE_SQUASHFS KERNEL_SOURCE")
+    source, kernel = sys.argv[1], sys.argv[2]
+    MODULES.mkdir(parents=True, exist_ok=True)
+    kerncopy = {
+        "dontChroot": True,
+        "timeout": 30,
+        "script": [
+            "mkdir -pv ${ROOT}/boot",
+            f"test -e ${{ROOT}}/boot/vmlinuz-$(uname -r) || cp {kernel} ${{ROOT}}/boot/vmlinuz-$(uname -r)",
+        ],
+    }
+    (MODULES / "linuxiso_before_bootloader_kerncopy.conf").write_text(
+        yaml.safe_dump(kerncopy, sort_keys=False),
+        encoding="utf-8",
+    )
+    patch_text_configs(source, kernel)
+    patch_settings()
+
+    stale = []
+    for base in (Path("/etc/calamares"), Path("/usr/share/calamares")):
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*.conf"):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError):
+                continue
+            if "/cdrom/casper/vmlinuz" in text:
+                stale.append(str(path))
+    if stale:
+        raise SystemExit("stale Casper kernel path remains: " + ", ".join(stale))
+
+
+if __name__ == "__main__":
+    main()
+'''
+
+
 LIVE_PROFILE_SCRIPT = r'''#!/usr/bin/env python3
 from __future__ import annotations
 
@@ -354,6 +461,10 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
     patcher.write_text(PATCH_CALAMARES, encoding="utf-8")
     patcher.chmod(0o755)
 
+    runtime_patcher = destination / "root/usr/lib/linux-iso/patch-calamares-runtime.py"
+    runtime_patcher.write_text(RUNTIME_CALAMARES_PATCH, encoding="utf-8")
+    runtime_patcher.chmod(0o755)
+
     live_profile = destination / "root/usr/lib/linux-iso/apply-live-profile.py"
     live_profile.write_text(LIVE_PROFILE_SCRIPT, encoding="utf-8")
     live_profile.chmod(0o755)
@@ -397,16 +508,20 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         "    sourcefs: \"squashfs\"\n"
         "    destination: \"\"\n"
         "EOF\n"
-        "{\n"
-        "  printf '%s\\n' '---' 'dontChroot: true' 'timeout: 30' 'firmwareType:' '  \"*\":'\n"
-        "  printf '    - -mkdir -pv ${ROOT}/boot\\n'\n"
-        "  printf '    - -cp %s ${ROOT}/boot/vmlinuz-$(uname -r)\\n' \"$KERNEL_SOURCE\"\n"
-        "} > /etc/calamares/modules/before_bootloader_mkdirs_context.conf\n"
+        "cat > /etc/calamares/modules/before_bootloader_mkdirs_context.conf <<EOF\n"
+        "---\n"
+        "dontChroot: true\n"
+        "timeout: 30\n"
+        "script:\n"
+        "  - \"mkdir -pv \\${ROOT}/boot\"\n"
+        "  - \"test -e \\${ROOT}/boot/vmlinuz-\\$(uname -r) || cp $KERNEL_SOURCE \\${ROOT}/boot/vmlinuz-\\$(uname -r)\"\n"
+        "EOF\n"
         "cat > /etc/calamares/modules/before_bootloader_context.conf <<'EOF'\n"
         "---\n"
         "firmwareType:\n"
         "  \"*\": \"-/bin/true\"\n"
         "EOF\n"
+        "python3 /usr/lib/linux-iso/patch-calamares-runtime.py \"$SOURCE\" \"$KERNEL_SOURCE\"\n"
         "printf '%s\\n' \"Linux ISO - Suret Calamares source: $SOURCE\"\n"
         "printf '%s\\n' \"Linux ISO - Suret kernel source: $KERNEL_SOURCE\"\n",
         encoding="utf-8",
@@ -419,10 +534,7 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         "#!/bin/sh\n"
         "set -eu\n"
         "sudo /usr/lib/linux-iso/prepare-calamares-media\n"
-        "if command -v calamares-launch-normal >/dev/null 2>&1; then\n"
-        "  exec sudo -E calamares-launch-normal\n"
-        "fi\n"
-        "exec sudo -E calamares\n",
+        "exec sudo -E /usr/bin/calamares -D8\n",
         encoding="utf-8",
     )
     installer.chmod(0o755)

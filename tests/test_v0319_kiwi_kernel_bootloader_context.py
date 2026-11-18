@@ -29,7 +29,7 @@ def test_v0319_calamares_uses_kiwi_kernel_not_casper(tmp_path: Path):
     helper = (build / "root/usr/lib/linux-iso/prepare-calamares-media").read_text()
     assert "/cdrom/boot/x86_64/loader/linux" in helper
     assert "before_bootloader_mkdirs_context.conf" in helper
-    assert "${ROOT}/boot/vmlinuz-$(uname -r)" in helper
+    assert r"\${ROOT}/boot/vmlinuz-\$(uname -r)" in helper
     assert "/cdrom/casper/vmlinuz" not in helper
 
 
