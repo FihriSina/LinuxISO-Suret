@@ -84,6 +84,9 @@ UBUNTU_2604_KDE = BaseRecipe(
         "kubuntu-desktop",
         "calamares",
         "calamares-settings-kubuntu",
+        "dosfstools",
+        "e2fsprogs",
+        "parted",
         "kiwi-dracut-live",
         "grub-pc-bin",
         "grub-efi-amd64-bin",
@@ -417,6 +420,11 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         "install -d -m 0755 /etc/sudoers.d\n"
         "echo 'live ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/99-linux-iso-live\n"
         "chmod 0440 /etc/sudoers.d/99-linux-iso-live\n"
+        "printf 'localhost.localdomain\n' > /etc/hostname\n"
+        "grep -qE '^[[:space:]]*127[.]0[.]1[.]1[[:space:]]+localhost[.]localdomain' /etc/hosts || printf '127.0.1.1 localhost.localdomain localhost\n' >> /etc/hosts\n"
+        "install -d -o live -g users -m 0755 /home/live/.local/bin\n"
+        "touch /home/live/.local/bin/env\n"
+        "chown live:users /home/live/.local/bin/env\n"
         "install -d -o live -g users -m 0755 /home/live/Desktop\n"
         "cat > /home/live/Desktop/linux-iso-installer.desktop <<'EOF'\n"
         "[Desktop Entry]\n"
@@ -535,7 +543,15 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         "ACCEL=(-accel tcg,thread=single -cpu max,la57=off)\n"
         "if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then ACCEL=(-enable-kvm -cpu host); fi\n"
         "FIRMWARE=${LINUX_ISO_QEMU_FIRMWARE:-uefi}\n"
-        "ARGS=(-machine q35 \"${ACCEL[@]}\" -m \"${LINUX_ISO_QEMU_MEMORY:-4096}\" -smp \"${LINUX_ISO_QEMU_CPUS:-2}\" -boot d -cdrom \"$ISO\" -vga std -display gtk,gl=off -no-reboot)\n"
+        "DISK=${LINUX_ISO_QEMU_DISK:-$RESULT/linux-iso-suret-test.qcow2}\n"
+        "DISK_SIZE=${LINUX_ISO_QEMU_DISK_SIZE:-40G}\n"
+        "QEMU_IMG=$(command -v qemu-img || true)\n"
+        "if [ ! -f \"$DISK\" ]; then\n"
+        "  if [ -z \"$QEMU_IMG\" ]; then echo 'qemu-img not found; cannot create installer test disk' >&2; exit 4; fi\n"
+        "  mkdir -p \"$(dirname -- \"$DISK\")\"\n"
+        "  \"$QEMU_IMG\" create -f qcow2 \"$DISK\" \"$DISK_SIZE\"\n"
+        "fi\n"
+        "ARGS=(-machine q35 \"${ACCEL[@]}\" -m \"${LINUX_ISO_QEMU_MEMORY:-4096}\" -smp \"${LINUX_ISO_QEMU_CPUS:-2}\" -boot d -cdrom \"$ISO\" -drive \"file=$DISK,format=qcow2,if=virtio\" -netdev user,id=net0 -device virtio-net-pci,netdev=net0 -vga std -display gtk,gl=off -no-reboot)\n"
         "if [ \"$FIRMWARE\" = uefi ]; then\n"
         "  CODE=\"\"; VARS=\"\"\n"
         "  for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd; do [ -f \"$f\" ] && CODE=\"$f\" && break; done\n"

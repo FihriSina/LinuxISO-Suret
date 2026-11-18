@@ -4,7 +4,15 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.3.15
+## Current milestone: v0.3.16
+
+### v0.3.16: Installer runtime fixes
+
+- Dynamic application categories now use Calamares `packagechooser`; `packagechooserq` was showing Kubuntu's hard-coded LibreOffice QML on every injected page.
+- `dosfstools`, `e2fsprogs`, and `parted` are explicit live-image dependencies so Calamares can create FAT32 EFI and ext filesystems reliably.
+- `test-qemu.sh` now creates a persistent 40 GiB QCOW2 installer disk and user-mode network automatically.
+- Live hostname resolution and the captured `~/.local/bin/env` shell hook are made quiet for testing.
+
 
 Ubuntu 26.04 live ISO recipes now include `kiwi-dracut-live`, the KIWI dracut module required by the `iso` + `overlay` image type.
 
@@ -22,7 +30,7 @@ This temporarily inhibits KDE screen locking for the duration of the build, rele
 The current implementation targets **KDE Plasma** and contains the capture, verification, restore, application-catalog and experimental ISO-project generation layers.
 
 
-### v0.3.15: UEFI-first hybrid ISO boot
+### v0.3.16: UEFI-first hybrid ISO boot
 
 The ISO recipe now explicitly sets KIWI firmware mode to `efi` and enables a GPT hybrid MBR. On x86_64 this asks KIWI to embed an EFI boot path while preserving BIOS/CSM boot support. The generated QEMU helper boots with OVMF/UEFI by default; legacy BIOS can still be selected with `LINUX_ISO_QEMU_FIRMWARE=bios`. The v0.3.14 Plasma X11 live-session fallback remains in place.
 
@@ -192,7 +200,7 @@ Clean base system
 
 ## Supported scope
 
-| Area | v0.3.15 |
+| Area | v0.3.16 |
 |---|---|
 | KDE Plasma capture | Yes |
 | active-only appearance capture | Yes |
@@ -219,7 +227,7 @@ Cross-family native package translation is intentionally blocked. A Pacman profi
 
 A source Plasma desktop with customized panels, third-party plasmoids, manually downloaded icons, a custom wallpaper, cursor/theme/font set, KWin additions and a styled terminal must install into a clean VM without manual desktop reconstruction. Optional applications should appear only when selected during installation.
 
-## Development environment diagnostics (v0.3.15)
+## Development environment diagnostics (v0.3.16)
 
 `uv` manages the project environment. The project explicitly enables the `dev`
 dependency group, which contains pytest.

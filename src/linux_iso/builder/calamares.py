@@ -318,8 +318,8 @@ def generate_calamares_overlay(profile: Path, root: Path) -> dict[str, Any]:
             yaml.safe_dump(_category_conf(category), sort_keys=False, allow_unicode=True),
             encoding="utf-8",
         )
-        instances.append({"id": instance_id, "module": "packagechooserq", "config": conf_name})
-        show.append(f"packagechooserq@{instance_id}")
+        instances.append({"id": instance_id, "module": "packagechooser", "config": conf_name})
+        show.append(f"packagechooser@{instance_id}")
 
     job_dir = root / "usr/share/linux-iso/calamares/modules/linuxiso-install"
     job_dir.mkdir(parents=True, exist_ok=True)

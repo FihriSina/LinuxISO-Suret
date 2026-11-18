@@ -97,7 +97,7 @@ def test_stage_iso_project_contains_profile_installer_and_required_packages(tmp_
     fragment = yaml.safe_load(
         (destination / "root/etc/calamares/linux-iso-settings-fragment.yaml").read_text(encoding="utf-8")
     )
-    assert "packagechooserq@linuxiso_internet" in fragment["sequence_patch"]["insert_before_summary"]
+    assert "packagechooser@linuxiso_internet" in fragment["sequence_patch"]["insert_before_summary"]
 
     catalog = json.loads(
         (destination / "root/usr/share/linux-iso/profile/catalog.json").read_text(encoding="utf-8")
