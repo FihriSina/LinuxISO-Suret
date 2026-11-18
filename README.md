@@ -4,8 +4,14 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.3.18
+## Current milestone: v0.3.19
 
+### v0.3.19: KIWI kernel handoff for Calamares
+
+- Replaces Kubuntu Calamares' hard-coded `/cdrom/casper/vmlinuz` copy step with the KIWI live kernel at `/cdrom/boot/x86_64/loader/linux`.
+- Neutralizes the Ubuntu `apt-cdrom` bootloader context, because the KIWI ISO is not a Casper/Apt CD repository.
+- Adds `grub2-common` and `efibootmgr` explicitly for deterministic target bootloader installation.
+- Keeps the v0.3.18 `rsync` and v0.3.17 `LiveOS/squashfs.img` fixes.
 
 ### v0.3.18: Calamares rsync runtime fix
 
@@ -207,7 +213,7 @@ Clean base system
 
 ## Supported scope
 
-| Area | v0.3.17 |
+| Area | v0.3.19 |
 |---|---|
 | KDE Plasma capture | Yes |
 | active-only appearance capture | Yes |
@@ -234,7 +240,7 @@ Cross-family native package translation is intentionally blocked. A Pacman profi
 
 A source Plasma desktop with customized panels, third-party plasmoids, manually downloaded icons, a custom wallpaper, cursor/theme/font set, KWin additions and a styled terminal must install into a clean VM without manual desktop reconstruction. Optional applications should appear only when selected during installation.
 
-## Development environment diagnostics (v0.3.17)
+## Development environment diagnostics (v0.3.19)
 
 `uv` manages the project environment. The project explicitly enables the `dev`
 dependency group, which contains pytest.

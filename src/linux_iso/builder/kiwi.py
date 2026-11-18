@@ -91,6 +91,8 @@ UBUNTU_2604_KDE = BaseRecipe(
         "kiwi-dracut-live",
         "grub-pc-bin",
         "grub-efi-amd64-bin",
+        "grub2-common",
+        "efibootmgr",
         "plasma-session-x11",
         "kwin-x11",
         "xorg",
@@ -377,6 +379,17 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         "  echo 'Linux ISO - Suret: could not locate KIWI LiveOS/squashfs.img' >&2\n"
         "  exit 10\n"
         "fi\n"
+        "KERNEL_SOURCE=\"\"\n"
+        "for candidate in /cdrom/boot/x86_64/loader/linux /run/initramfs/live/boot/x86_64/loader/linux /run/initramfs/boot/x86_64/loader/linux; do\n"
+        "  if [ -f \"$candidate\" ]; then KERNEL_SOURCE=\"$candidate\"; break; fi\n"
+        "done\n"
+        "if [ -z \"$KERNEL_SOURCE\" ]; then\n"
+        "  KERNEL_SOURCE=$(find /run /cdrom -maxdepth 7 -type f -path '*/boot/x86_64/loader/linux' -print -quit 2>/dev/null || true)\n"
+        "fi\n"
+        "if [ -z \"$KERNEL_SOURCE\" ] || [ ! -f \"$KERNEL_SOURCE\" ]; then\n"
+        "  echo 'Linux ISO - Suret: could not locate KIWI live kernel' >&2\n"
+        "  exit 11\n"
+        "fi\n"
         "cat > /etc/calamares/modules/unpackfs.conf <<EOF\n"
         "---\n"
         "unpack:\n"
@@ -384,7 +397,18 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         "    sourcefs: \"squashfs\"\n"
         "    destination: \"\"\n"
         "EOF\n"
-        "printf '%s\\n' \"Linux ISO - Suret Calamares source: $SOURCE\"\n",
+        "{\n"
+        "  printf '%s\\n' '---' 'dontChroot: true' 'timeout: 30' 'firmwareType:' '  \"*\":'\n"
+        "  printf '    - -mkdir -pv ${ROOT}/boot\\n'\n"
+        "  printf '    - -cp %s ${ROOT}/boot/vmlinuz-$(uname -r)\\n' \"$KERNEL_SOURCE\"\n"
+        "} > /etc/calamares/modules/before_bootloader_mkdirs_context.conf\n"
+        "cat > /etc/calamares/modules/before_bootloader_context.conf <<'EOF'\n"
+        "---\n"
+        "firmwareType:\n"
+        "  \"*\": \"-/bin/true\"\n"
+        "EOF\n"
+        "printf '%s\\n' \"Linux ISO - Suret Calamares source: $SOURCE\"\n"
+        "printf '%s\\n' \"Linux ISO - Suret kernel source: $KERNEL_SOURCE\"\n",
         encoding="utf-8",
     )
     media_helper.chmod(0o755)
