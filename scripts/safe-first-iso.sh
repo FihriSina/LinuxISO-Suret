@@ -17,8 +17,8 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-if [ -f "$PROFILE/manifest.yaml" ] && ! grep -Eq '^[[:space:]]*fidelity_schema:[[:space:]]*3([[:space:]]|$)' "$PROFILE/manifest.yaml"; then
-  echo "Profile predates strict fidelity capture v3: $PROFILE" >&2
+if [ -f "$PROFILE/manifest.yaml" ] && ! grep -Eq '^[[:space:]]*fidelity_schema:[[:space:]]*4([[:space:]]|$)' "$PROFILE/manifest.yaml"; then
+  echo "Profile predates strict fidelity capture v4: $PROFILE" >&2
   echo "Re-capture it with: uv run linux-iso scan -o $PROFILE" >&2
   exit 6
 fi

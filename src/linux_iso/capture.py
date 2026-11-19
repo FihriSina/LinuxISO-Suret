@@ -294,7 +294,14 @@ def _external_directory_target(src: Path) -> Path:
     return Path(".local/share/linux-iso/captured-wallpapers") / f"{digest}-{safe_name}"
 
 
-def _normalize_local_config_path(raw: str, home: Path) -> Path | None:
+def _local_config_path_candidate(raw: str, home: Path) -> Path | None:
+    """Decode a local config path even when the referenced file was moved.
+
+    Plasma can retain stale wallpaper paths after a file is moved within the
+    user's Pictures tree.  Strict-fidelity capture needs the decoded path so it
+    can repair that reference instead of rejecting an otherwise complete
+    profile.
+    """
     raw = raw.strip().strip('"').strip("'")
     if not raw or raw.startswith(("http://", "https://")):
         return None
@@ -309,12 +316,17 @@ def _normalize_local_config_path(raw: str, home: Path) -> Path | None:
         raw = str(home / raw[len("$HOME/") :])
     elif raw.startswith("~/"):
         raw = str(home / raw[2:])
-    candidate = Path(raw).expanduser()
+    if not raw.startswith("/"):
+        return None
     try:
-        resolved = candidate.resolve()
+        return Path(raw).expanduser().resolve(strict=False)
     except OSError:
         return None
-    return resolved if resolved.exists() else None
+
+
+def _normalize_local_config_path(raw: str, home: Path) -> Path | None:
+    resolved = _local_config_path_candidate(raw, home)
+    return resolved if resolved is not None and resolved.exists() else None
 
 
 def _launcher_icon_name(path: Path) -> str | None:
@@ -418,6 +430,61 @@ def _wallpaper_config_references(home: Path) -> list[Path]:
             seen.add(resolved)
             found.append(resolved)
     return found
+
+
+def _relocated_wallpaper_references(home: Path) -> list[tuple[Path, Path]]:
+    """Resolve stale home-local wallpaper paths by unique basename.
+
+    KDE/Plasma may keep an old Image= path after a wallpaper is moved into a
+    subdirectory.  If the original path is missing but exactly one file with the
+    same basename exists below the old parent directory, treat that as a move and
+    rewrite the captured config to the new portable location.  Ambiguous matches
+    are deliberately left unresolved so verification still fails rather than
+    guessing.
+    """
+    config = home / ".config/plasma-org.kde.plasma.desktop-appletsrc"
+    if not config.is_file():
+        return []
+    try:
+        text = config.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+
+    home_resolved = home.resolve()
+    moved: list[tuple[Path, Path]] = []
+    seen: set[Path] = set()
+    for line in text.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key not in {"Image", "SlidePaths"}:
+            continue
+        raw_values = [value] if key == "Image" else value.replace(";", ",").split(",")
+        for raw in raw_values:
+            missing = _local_config_path_candidate(raw, home)
+            if missing is None or missing.exists() or missing in seen:
+                continue
+            seen.add(missing)
+            try:
+                missing.relative_to(home_resolved)
+            except ValueError:
+                continue
+            search_root = missing.parent if missing.parent.is_dir() else home_resolved
+            try:
+                matches = sorted(
+                    {
+                        item.resolve()
+                        for item in search_root.rglob(missing.name)
+                        if item.is_file() and not item.is_symlink() and not path_is_sensitive(item)
+                    },
+                    key=lambda item: str(item),
+                )
+            except OSError:
+                continue
+            if len(matches) == 1:
+                moved.append((missing, matches[0]))
+    return moved
 
 
 def _payload_path_for_destination(payload_home: Path, destination: str) -> Path | None:
@@ -740,10 +807,20 @@ def capture_profile(
         )
     )
     referenced.update(_wallpaper_config_references(home))
+    relocated_wallpapers = _relocated_wallpaper_references(home)
+    referenced.update(found for _missing, found in relocated_wallpapers)
     promoted_roots: set[Path] = set()
     copied_directories: set[Path] = set()
-    replacements: dict[str, str] = {}
     home_resolved = home.resolve()
+    replacements: dict[str, str] = {}
+    for missing, found in relocated_wallpapers:
+        target = f"{{{{HOME}}}}/{found.relative_to(home_resolved).as_posix()}"
+        replacements[str(missing)] = target
+        try:
+            missing_relative = missing.relative_to(home_resolved)
+        except ValueError:
+            continue
+        replacements[f"{{{{HOME}}}}/{missing_relative.as_posix()}"] = target
     for src in sorted(referenced, key=lambda item: str(item)):
         if path_is_sensitive(src):
             continue
@@ -844,7 +921,7 @@ def capture_profile(
             "application_install_mode": "online-selective",
             "profile_version": __version__,
             "asset_mode": asset_mode,
-            "fidelity_schema": 3,
+            "fidelity_schema": 4,
         },
     )
 

@@ -4,9 +4,9 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.3.25
+## Current milestone: v0.3.26
 
-### v0.3.25: installed-user fidelity enforcement
+### v0.3.26: moved-wallpaper reference repair
 
 - Adds a mandatory Calamares target-profile shellprocess immediately after target-user creation; visual restore no longer depends on the optional application-install Python job being inserted correctly.
 - Runtime Calamares auditing now refuses to start if the target-profile job or application job is missing or ordered incorrectly.
@@ -265,7 +265,7 @@ Clean base system
 
 ## Supported scope
 
-| Area | v0.3.25 |
+| Area | v0.3.26 |
 |---|---|
 | KDE Plasma capture | Yes |
 | active-only appearance capture | Yes |
@@ -292,7 +292,7 @@ Cross-family native package translation is intentionally blocked. A Pacman profi
 
 A source Plasma desktop with customized panels, third-party plasmoids, manually downloaded icons, a custom wallpaper, cursor/theme/font set, KWin additions and a styled terminal must install into a clean VM without manual desktop reconstruction. Optional applications should appear only when selected during installation.
 
-## Development environment diagnostics (v0.3.25)
+## Development environment diagnostics (v0.3.26)
 
 `uv` manages the project environment. The project explicitly enables the `dev`
 dependency group, which contains pytest.

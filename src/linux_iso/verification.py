@@ -83,10 +83,10 @@ def verify_profile(profile: Path) -> VerificationResult:
         fidelity_schema = int(restore.get("fidelity_schema", 0) or 0)
     except (TypeError, ValueError):
         fidelity_schema = 0
-    if fidelity_schema < 3:
+    if fidelity_schema < 4:
         warnings.append(
-            "Profile predates strict-fidelity capture v3; re-run 'linux-iso scan' before the next ISO build "
-            "to bundle pinned launchers plus file/directory wallpaper references."
+            "Profile predates strict-fidelity capture v4; re-run 'linux-iso scan' before the next ISO build "
+            "to repair moved wallpaper references as well as bundle launcher/wallpaper assets."
         )
     stats: dict[str, int | str] = {
         "asset_mode": restore.get("asset_mode", "legacy/all"),

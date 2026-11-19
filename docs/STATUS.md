@@ -1,3 +1,9 @@
+## v0.3.26 implemented
+
+- Repairs stale Plasma wallpaper references when a referenced file was moved into a unique subdirectory under its previous parent.
+- Fidelity schema v4 requires a fresh scan.
+- Keeps ambiguous missing wallpaper references fatal instead of guessing.
+
 # Status
 
 ## v0.3.25 implemented
