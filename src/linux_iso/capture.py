@@ -475,7 +475,7 @@ def _runtime_plasma_wallpaper_state(home: Path) -> list[dict[str, object]]:
         'for (var i=0; i<ds.length; ++i) {'
         ' var d=ds[i]; var p=d.wallpaperPlugin;'
         ' d.currentConfigGroup=["Wallpaper",p,"General"];'
-        ' out.push({id:d.id,plugin:p,image:d.readConfig("Image",""),slidePaths:d.readConfig("SlidePaths","")});'
+        ' out.push({id:d.id,screen:(typeof d.screen === \"undefined\" ? -1 : d.screen),plugin:p,image:d.readConfig("Image",""),slidePaths:d.readConfig("SlidePaths","")});'
         '} JSON.stringify(out);'
     )
     try:
@@ -508,9 +508,14 @@ def _runtime_plasma_wallpaper_state(home: Path) -> list[dict[str, object]]:
                 containment_id = int(item.get("id"))
             except (TypeError, ValueError):
                 continue
+            try:
+                screen = int(item.get("screen", -1))
+            except (TypeError, ValueError):
+                screen = -1
             result.append(
                 {
                     "id": containment_id,
+                    "screen": screen,
                     "plugin": str(item.get("plugin") or ""),
                     "image": str(item.get("image") or ""),
                     "slidePaths": str(item.get("slidePaths") or ""),
@@ -541,6 +546,44 @@ def _portable_wallpaper_target(src: Path, home: Path, replacements: dict[str, st
         except OSError:
             return None
     return f"{{{{HOME}}}}/{relative.as_posix()}"
+
+
+def _runtime_primary_visible_wallpaper(
+    home: Path,
+    states: list[dict[str, object]],
+    replacements: dict[str, str],
+) -> str | None:
+    """Return the wallpaper actually visible on the primary Plasma screen.
+
+    Reading the first ``Image=`` entry from plasma's persisted config is not
+    sufficient: stale/dormant containments can appear before the active screen.
+    Runtime Plasma state is therefore authoritative when available. Screen 0 is
+    preferred, followed by other numbered screens and finally unknown-screen
+    containments in their runtime order.
+    """
+    ranked: list[tuple[tuple[int, int, int], str]] = []
+    for index, state in enumerate(states):
+        image = _normalize_local_config_path(str(state.get("image") or ""), home)
+        if image is None or not image.is_file():
+            continue
+        target = _portable_wallpaper_target(image, home, replacements)
+        if not target:
+            continue
+        try:
+            screen = int(state.get("screen", -1))
+        except (TypeError, ValueError):
+            screen = -1
+        if screen == 0:
+            rank = (0, 0, index)
+        elif screen >= 0:
+            rank = (1, screen, index)
+        else:
+            rank = (2, 9999, index)
+        ranked.append((rank, target))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: item[0])
+    return ranked[0][1]
 
 
 def _apply_runtime_wallpaper_state(
@@ -1790,6 +1833,9 @@ def capture_profile(
     _apply_runtime_wallpaper_state(
         payload_home, home, runtime_wallpaper_states, replacements, captured_configs
     )
+    runtime_visible_wallpaper = _runtime_primary_visible_wallpaper(
+        home, runtime_wallpaper_states, replacements
+    )
     packages.sort(key=lambda p: (p.category, p.provider, p.name.lower()))
     desktop = DesktopProfile(
         desktop=desktop_name,
@@ -1814,7 +1860,7 @@ def capture_profile(
 
     system_visual = _capture_system_visual_fidelity(output)
     source_info = _capture_source_branding(output, collect_system_info())
-    visible_wallpaper = _captured_visible_wallpaper(payload_home)
+    visible_wallpaper = runtime_visible_wallpaper or _captured_visible_wallpaper(payload_home)
 
     manifest = Manifest(
         schema_version=1,

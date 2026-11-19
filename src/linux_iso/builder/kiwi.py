@@ -920,6 +920,7 @@ if __name__ == "__main__":
 FIRST_LOGIN_FIDELITY_SCRIPT = r'''#!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -927,7 +928,8 @@ import time
 from pathlib import Path
 
 STATE = Path("/usr/share/linux-iso/profile/visible-state.json")
-MARKER = Path.home() / ".local/state/linux-iso/first-login-fidelity-v1"
+STATE_DIR = Path.home() / ".local/state/linux-iso"
+REPORT = STATE_DIR / "first-login-report.json"
 
 
 def run(command: list[str]) -> bool:
@@ -950,6 +952,15 @@ def qdbus_tool() -> str | None:
     return None
 
 
+def kwrite(file_name: str, group: str, key: str, value: str) -> bool:
+    if not value:
+        return True
+    tool = shutil.which("kwriteconfig6") or shutil.which("kwriteconfig5")
+    if not tool:
+        return False
+    return run([tool, "--file", file_name, "--group", group, "--key", key, value])
+
+
 def apply_wallpaper(path: Path) -> bool:
     if not path.is_file():
         return False
@@ -964,7 +975,7 @@ def apply_wallpaper(path: Path) -> bool:
         "d.currentConfigGroup=['Wallpaper','org.kde.image','General']; "
         "d.writeConfig('Image',u); }"
     )
-    for _attempt in range(30):
+    for _attempt in range(45):
         if run([
             qdbus,
             "org.kde.plasmashell",
@@ -977,6 +988,29 @@ def apply_wallpaper(path: Path) -> bool:
     return False
 
 
+def active_wallpaper() -> str:
+    qdbus = qdbus_tool()
+    if qdbus is None:
+        return ""
+    script = (
+        'var ds=desktops(); if (!ds.length) ""; else {'
+        ' var d=ds[0]; var p=d.wallpaperPlugin;'
+        ' d.currentConfigGroup=["Wallpaper",p,"General"]; d.readConfig("Image",""); }'
+    )
+    try:
+        proc = subprocess.run(
+            [qdbus, "org.kde.plasmashell", "/PlasmaShell", "org.kde.PlasmaShell.evaluateScript", script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return proc.stdout.strip().splitlines()[-1] if proc.stdout.strip() else ""
+
+
 def refresh_desktop_database() -> None:
     for tool in ("kbuildsycoca6", "kbuildsycoca5"):
         path = shutil.which(tool)
@@ -985,42 +1019,258 @@ def refresh_desktop_database() -> None:
             break
 
 
-def enforce_icon_theme(theme: str) -> None:
-    if not theme:
-        return
-    tool = shutil.which("kwriteconfig6") or shutil.which("kwriteconfig5")
-    if tool:
-        run([tool, "--file", "kdeglobals", "--group", "Icons", "--key", "Theme", theme])
+def apply_appearance(state: dict[str, object]) -> dict[str, bool]:
+    results: dict[str, bool] = {}
+
+    icon = str(state.get("icon_theme") or "")
+    results["icon_theme"] = kwrite("kdeglobals", "Icons", "Theme", icon) if icon else True
+
+    cursor = str(state.get("cursor_theme") or "")
+    if cursor:
+        tool = shutil.which("plasma-apply-cursortheme")
+        results["cursor_theme"] = run([tool, cursor]) if tool else kwrite("kcminputrc", "Mouse", "cursorTheme", cursor)
+    else:
+        results["cursor_theme"] = True
+
+    colors = str(state.get("color_scheme") or "")
+    if colors:
+        tool = shutil.which("plasma-apply-colorscheme")
+        results["color_scheme"] = run([tool, colors]) if tool else kwrite("kdeglobals", "General", "ColorScheme", colors)
+    else:
+        results["color_scheme"] = True
+
+    plasma = str(state.get("plasma_theme") or "")
+    if plasma:
+        tool = shutil.which("plasma-apply-desktoptheme")
+        results["plasma_theme"] = run([tool, plasma]) if tool else kwrite("plasmarc", "Theme", "name", plasma)
+    else:
+        results["plasma_theme"] = True
+
+    # GTK and KWin decoration configuration files are already restored byte-for-byte.
+    # Record their presence here; forcing a global look-and-feel package at runtime
+    # can reset panels/wallpapers and is intentionally avoided.
+    results["gtk_theme"] = True
+    results["window_decoration"] = True
+    return results
 
 
 def main() -> int:
-    if MARKER.exists():
-        return 0
     try:
         state = json.loads(STATE.read_text(encoding="utf-8")) if STATE.is_file() else {}
     except Exception:
         state = {}
 
+    schema = int(state.get("fidelity_schema", 0) or 0)
+    state_token = hashlib.sha256(
+        json.dumps(state, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()[:12]
+    marker = STATE_DIR / f"first-login-fidelity-{state_token}"
+    if marker.exists():
+        return 0
+
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
     refresh_desktop_database()
-    enforce_icon_theme(str(state.get("icon_theme") or ""))
+    appearance = apply_appearance(state)
 
     wallpaper = str(state.get("wallpaper") or "")
     wallpaper_ok = True
+    resolved_wallpaper = ""
     if wallpaper:
         wallpaper = wallpaper.replace("{{HOME}}", str(Path.home()))
+        resolved_wallpaper = wallpaper
         wallpaper_ok = apply_wallpaper(Path(wallpaper))
+
+    report = {
+        "fidelity_schema": schema,
+        "requested_wallpaper": resolved_wallpaper,
+        "active_wallpaper": active_wallpaper(),
+        "wallpaper_ok": wallpaper_ok,
+        "appearance": appearance,
+        "source_name": str(state.get("source_name") or ""),
+    }
+    REPORT.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     if not wallpaper_ok:
         return 1
 
-    MARKER.parent.mkdir(parents=True, exist_ok=True)
-    MARKER.write_text("ok\n", encoding="utf-8")
+    marker.write_text("ok\n", encoding="utf-8")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
 '''
+
+SURET_DIAGNOSE_SCRIPT = r'''#!/usr/bin/env bash
+set -Eeuo pipefail
+
+stamp=$(date +%Y%m%d-%H%M%S)
+out=${1:-"$HOME/suret-diagnostics-$stamp.tar.gz"}
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/suret-diagnostics.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT
+
+mkdir -p "$tmp/config" "$tmp/system" "$tmp/launchers" "$tmp/logs"
+
+redact() {
+  sed -e "s|$HOME|<HOME>|g" -e "s|$(id -un)|<USER>|g" -e "s|$(hostname)|<HOST>|g"
+}
+
+{
+  echo "timestamp=$(date --iso-8601=seconds 2>/dev/null || date)"
+  echo "user=<redacted> uid=$(id -u)"
+  echo "home=<redacted>"
+  echo "desktop=${XDG_CURRENT_DESKTOP:-}"
+  echo "session_type=${XDG_SESSION_TYPE:-}"
+  echo "session_id=${XDG_SESSION_ID:-}"
+  desktop_dir=$(xdg-user-dir DESKTOP 2>/dev/null || true)
+  echo "desktop_dir=${desktop_dir/$HOME/<HOME>}"
+  echo "kernel=$(uname -srmo)"
+  echo "hostname_redacted=yes"
+} > "$tmp/summary.txt"
+
+cp -a /usr/share/linux-iso/profile/visible-state.json "$tmp/system/" 2>/dev/null || true
+cp -a /var/lib/linux-iso/profile-applied "$tmp/system/" 2>/dev/null || true
+cp -a "$HOME/.local/state/linux-iso/first-login-report.json" "$tmp/system/" 2>/dev/null || true
+cp -a /etc/default/grub.d/98-linux-iso-source-fidelity.cfg "$tmp/system/" 2>/dev/null || true
+cp -a /etc/sddm.conf.d/98-linux-iso-source-fidelity.conf "$tmp/system/" 2>/dev/null || true
+cp -a /etc/os-release "$tmp/system/" 2>/dev/null || true
+
+for f in \
+  kdeglobals plasmarc kcminputrc kwinrc plasma-org.kde.plasma.desktop-appletsrc \
+  kactivitymanagerd-statsrc dolphinrc konsolerc user-dirs.dirs user-dirs.locale; do
+  cp -a "$HOME/.config/$f" "$tmp/config/" 2>/dev/null || true
+done
+
+qdbus=''
+for q in qdbus6 qdbus-qt6 qdbus; do
+  if command -v "$q" >/dev/null 2>&1; then qdbus=$q; break; fi
+done
+if [ -n "$qdbus" ]; then
+  "$qdbus" org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript \
+    'var out=[]; var ds=desktops(); for (var i=0;i<ds.length;++i){var d=ds[i];var p=d.wallpaperPlugin;d.currentConfigGroup=["Wallpaper",p,"General"];out.push({id:d.id,screen:(typeof d.screen === "undefined" ? -1 : d.screen),plugin:p,image:d.readConfig("Image",""),slidePaths:d.readConfig("SlidePaths","")});} JSON.stringify(out);' \
+    > "$tmp/system/runtime-wallpaper.txt" 2>&1 || true
+fi
+
+{
+  for cmd in dolphin kioclient6 kioexec qdbus6 qdbus-qt6 kwriteconfig6 kreadconfig6 \
+             kbuildsycoca6 plasma-apply-cursortheme plasma-apply-colorscheme \
+             plasma-apply-desktoptheme update-grub grub-mkconfig; do
+    printf '%-30s ' "$cmd"
+    command -v "$cmd" 2>/dev/null || echo MISSING
+  done
+} > "$tmp/system/command-availability.txt"
+
+{
+  for pkg in dolphin kio-extras plasma-desktop plasma-workspace sddm grub2-common; do
+    dpkg-query -W -f='${Package}\t${Status}\t${Version}\n' "$pkg" 2>/dev/null || echo "$pkg\tNOT-INSTALLED"
+  done
+} > "$tmp/system/packages.txt"
+
+{
+  echo '== computer:/ KIO test =='
+  if command -v kioclient6 >/dev/null 2>&1; then timeout 8 kioclient6 stat 'computer:/' 2>&1 || true; fi
+  echo
+  echo '== failed units =='
+  systemctl --failed --no-pager 2>&1 || true
+  echo
+  echo '== boot mounts =='
+  findmnt 2>&1 || true
+  echo
+  echo '== block devices =='
+  lsblk -f 2>&1 || true
+  echo
+  echo '== UEFI entries =='
+  efibootmgr -v 2>&1 || true
+} > "$tmp/system/runtime-checks.txt"
+
+{
+  desktop_dir=$(xdg-user-dir DESKTOP 2>/dev/null || true)
+  for dir in "$desktop_dir" "$HOME/.local/share/applications"; do
+    [ -d "$dir" ] || continue
+    find "$dir" -maxdepth 1 -type f -name '*.desktop' -print0 2>/dev/null
+  done | sort -zu | while IFS= read -r -d '' f; do
+    echo "--- $f"
+    grep -E '^(Name(\[[^]]+\])?|Exec|Icon|Type|NoDisplay|Hidden)=' "$f" 2>/dev/null || true
+  done
+} > "$tmp/launchers/desktop-files.txt"
+
+python3 - "$tmp/launchers/exec-health.txt" <<'PY'
+from __future__ import annotations
+import os, shlex, shutil, subprocess, sys
+from pathlib import Path
+
+out = Path(sys.argv[1])
+home = Path.home()
+roots: list[Path] = []
+try:
+    desktop = subprocess.run(
+        ["xdg-user-dir", "DESKTOP"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        timeout=2,
+    ).stdout.strip()
+except Exception:
+    desktop = ""
+if desktop:
+    roots.append(Path(desktop))
+roots.append(home / ".local/share/applications")
+seen: set[Path] = set()
+rows: list[tuple[str, str, str, str]] = []
+for root in roots:
+    if not root.is_dir():
+        continue
+    for path in sorted(root.glob("*.desktop")):
+        if path in seen:
+            continue
+        seen.add(path)
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        name = path.name
+        exec_line = ""
+        for line in text.splitlines():
+            if line.startswith("Name=") and name == path.name:
+                name = line.split("=", 1)[1].strip() or name
+            if line.startswith("Exec=") and not exec_line:
+                exec_line = line.split("=", 1)[1].strip()
+        if not exec_line:
+            rows.append((str(path), name, "NO_EXEC", ""))
+            continue
+        try:
+            parts = shlex.split(exec_line)
+        except ValueError:
+            parts = exec_line.split()
+        parts = [p for p in parts if not (p.startswith("%") and len(p) <= 2)]
+        if not parts:
+            rows.append((str(path), name, "EMPTY_EXEC", exec_line))
+            continue
+        cmd = parts[0]
+        if cmd == "env":
+            parts = [p for p in parts[1:] if "=" not in p or p.startswith("/")]
+            cmd = parts[0] if parts else ""
+        ok = bool(cmd) and ((os.path.isabs(cmd) and os.access(cmd, os.X_OK)) or bool(shutil.which(cmd)))
+        rows.append((str(path), name, "OK" if ok else "MISSING_EXEC", exec_line))
+out.write_text("\n".join("\t".join(row) for row in rows) + "\n", encoding="utf-8")
+PY
+
+journalctl -b --no-pager 2>/dev/null \
+  | grep -Ei 'linux-iso|calamares|plasmashell|sddm|kwin|kio|grub' \
+  | tail -n 500 \
+  | redact > "$tmp/logs/desktop-installer-journal.txt" || true
+
+# Redact home/user/hostname strings from copied text diagnostics.
+while IFS= read -r -d '' f; do
+  tmpf="$f.redacted"
+  redact < "$f" > "$tmpf" 2>/dev/null && mv "$tmpf" "$f" || rm -f "$tmpf"
+done < <(find "$tmp/config" "$tmp/system" "$tmp/launchers" "$tmp/logs" -type f -print0)
+
+mkdir -p "$(dirname -- "$out")"
+tar -czf "$out" -C "$tmp" .
+echo "$out"
+'''
+
 
 
 def _read_manifest(profile: Path) -> dict[str, Any]:
@@ -1161,15 +1411,21 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe, manifest: dict[s
 
     restore_meta = manifest.get("restore", {}) or {}
     visible_wallpaper = str(restore_meta.get("visible_wallpaper") or "")
-    icon_theme = ""
+    active_appearance: dict[str, str] = {}
     for component in manifest.get("desktop", {}).get("component_details", []):
-        if component.get("kind") == "icon-theme" and not component.get("inherited"):
-            icon_theme = str(component.get("name") or "")
-            if icon_theme:
-                break
+        kind = str(component.get("kind") or "")
+        name = str(component.get("name") or "")
+        if not kind or not name or component.get("inherited"):
+            continue
+        active_appearance.setdefault(kind, name)
     visible_state = {
         "wallpaper": visible_wallpaper,
-        "icon_theme": icon_theme,
+        "icon_theme": active_appearance.get("icon-theme", ""),
+        "cursor_theme": active_appearance.get("cursor-theme", ""),
+        "color_scheme": active_appearance.get("color-scheme", ""),
+        "plasma_theme": active_appearance.get("plasma-theme", ""),
+        "gtk_theme": active_appearance.get("gtk-theme", ""),
+        "window_decoration": active_appearance.get("window-decoration", ""),
         "source_name": source_name,
         "fidelity_schema": int(restore_meta.get("fidelity_schema", 0) or 0),
     }
@@ -1197,6 +1453,11 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe, manifest: dict[s
     first_login = destination / "root/usr/lib/linux-iso/apply-first-login-fidelity.py"
     first_login.write_text(FIRST_LOGIN_FIDELITY_SCRIPT, encoding="utf-8")
     first_login.chmod(0o755)
+
+    diagnose = destination / "root/usr/local/bin/suret-diagnose"
+    diagnose.parent.mkdir(parents=True, exist_ok=True)
+    diagnose.write_text(SURET_DIAGNOSE_SCRIPT, encoding="utf-8")
+    diagnose.chmod(0o755)
     autostart = destination / "root/etc/xdg/autostart/linux-iso-first-login-fidelity.desktop"
     autostart.parent.mkdir(parents=True, exist_ok=True)
     autostart.write_text(

@@ -4,7 +4,25 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.4.0
+## Current milestone: v0.4.1
+
+### v0.4.1: batch-debugging and primary-screen fidelity convergence
+
+- Treats the running Plasma primary screen (screen 0) as authoritative for the visible wallpaper instead of taking the first persisted `Image=` entry from any containment. This avoids stale/dormant containments selecting the wrong wallpaper.
+- First-login convergence now reapplies icon theme, cursor theme, color scheme and Plasma desktop theme in addition to the wallpaper, without invoking a global look-and-feel reset that could destroy panel/layout fidelity.
+- First-login completion markers are keyed to the captured visible-state hash, so a changed profile can self-heal even when the fidelity schema number stays the same.
+- Writes `~/.local/state/linux-iso/first-login-report.json` with requested/active wallpaper and appearance-application results.
+- Installs `suret-diagnose`, a one-command redacted diagnostic collector for wallpaper/containment state, launcher Exec health, KIO `computer:/`, required commands/packages, GRUB/SDDM fidelity, systemd failures and relevant desktop/installer journal events.
+- Batch diagnostics intentionally redact the user home path, username and hostname.
+- Project regression suite: 130 tests.
+
+If the installed system still differs from the source desktop after the final acceptance boot, run this once inside the installed system and attach the generated archive instead of collecting errors one by one:
+
+```bash
+suret-diagnose
+```
+
+The command prints the path of a `~/suret-diagnostics-*.tar.gz` archive.
 
 ### v0.4.0: final acceptance / one-window install convergence
 

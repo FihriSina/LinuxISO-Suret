@@ -10,7 +10,7 @@ RESULT_DIR=${3:-$HOME/linux-iso-build-result}
 
 command -v uv >/dev/null 2>&1 || { echo 'uv is required' >&2; exit 2; }
 
-printf '== Linux ISO - Suret v0.4.0 final acceptance ==\n'
+printf '== Linux ISO - Suret v0.4.1 batch final acceptance ==\n'
 printf 'Profile: %s\nBuild:   %s\nResult:  %s\n\n' "$PROFILE" "$BUILD_DIR" "$RESULT_DIR"
 
 rm -rf "$PROFILE" "$BUILD_DIR" "$RESULT_DIR"
@@ -25,6 +25,7 @@ LINUX_ISO_RESULT_DIR="$RESULT_DIR" ./scripts/safe-first-iso.sh "$PROFILE" "$BUIL
 
 printf '\nStarting the final installer acceptance VM.\n'
 printf 'Install normally. When Calamares says Done/Restart, do not close QEMU.\n'
-printf 'The same VM will reboot from the installed disk automatically.\n\n'
+printf 'The same VM will reboot from the installed disk automatically.\n'
+printf 'If anything is still wrong after installed boot, run suret-diagnose once inside the VM and attach the generated archive.\n\n'
 
 exec "$BUILD_DIR/test-qemu.sh" "$RESULT_DIR" install
