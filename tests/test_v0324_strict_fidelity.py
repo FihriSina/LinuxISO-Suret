@@ -161,5 +161,5 @@ def test_v0324_runtime_patcher_rebrands_kubuntu_installer_text(tmp_path: Path):
 def test_v0324_safe_build_rejects_pre_fidelity_profile():
     script = Path("scripts/safe-first-iso.sh").read_text(encoding="utf-8")
     assert "fidelity_schema" in script
-    assert "Profile predates desktop-surface fidelity capture v7" in script
+    assert "Profile predates system-visible fidelity capture v8" in script
     assert "uv run linux-iso scan -o" in script

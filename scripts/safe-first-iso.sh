@@ -17,9 +17,17 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-if [ -f "$PROFILE/manifest.yaml" ] && ! grep -Eq '^[[:space:]]*fidelity_schema:[[:space:]]*7([[:space:]]|$)' "$PROFILE/manifest.yaml"; then
-  echo "Profile predates desktop-surface fidelity capture v7: $PROFILE" >&2
-  echo "Re-capture it with: uv run linux-iso scan -o $PROFILE" >&2
+if [ -f "$PROFILE/manifest.yaml" ]; then
+  FIDELITY_SCHEMA=$(awk '/^[[:space:]]*fidelity_schema:[[:space:]]*/ { print $2; exit }' "$PROFILE/manifest.yaml")
+  if ! [[ "$FIDELITY_SCHEMA" =~ ^[0-9]+$ ]] || [ "$FIDELITY_SCHEMA" -lt 8 ]; then
+    echo "Profile predates system-visible fidelity capture v8: $PROFILE" >&2
+    echo "Detected fidelity_schema: ${FIDELITY_SCHEMA:-missing}" >&2
+    echo "Re-capture it with: uv run linux-iso scan -o $PROFILE" >&2
+    exit 6
+  fi
+else
+  echo "Profile manifest is missing: $PROFILE/manifest.yaml" >&2
+  echo "Create it with: uv run linux-iso scan -o $PROFILE" >&2
   exit 6
 fi
 

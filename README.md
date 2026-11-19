@@ -4,7 +4,14 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.3.32
+## Current milestone: v0.3.33
+
+
+### v0.3.33: safe-build profile schema gate fix
+
+- `safe-first-iso.sh` now accepts the current fidelity schema (`>= 8`) instead of incorrectly requiring exactly schema 7.
+- Missing/old profile manifests fail with an explicit detected schema message before the ISO build starts.
+- Regression coverage executes the real shell gate for schema 7, 8, future schema values, and missing manifests.
 
 ### v0.3.32: system-visible fidelity (GRUB, SDDM, avatar, KIO compatibility)
 

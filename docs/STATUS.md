@@ -1,3 +1,8 @@
+## v0.3.33 implemented
+
+- Fixed `safe-first-iso.sh` rejecting freshly captured fidelity schema 8 profiles.
+- The build gate now accepts schema 8 and newer, rejects stale/missing schemas explicitly, and has executable regression tests.
+
 ## v0.3.32 implemented
 
 - System-visible fidelity now includes source GRUB theme/background settings and SDDM theme assets.
