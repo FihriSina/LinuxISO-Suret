@@ -6,17 +6,32 @@
 
 ## Native ISO Mode (recommended)
 
-Suret v0.5.0 can remaster a user-supplied distro ISO instead of rebuilding the desktop on an Ubuntu/Kubuntu base. Pardus 25 live ISOs are the first build-capable adapter.
+Suret v0.5.1 can remaster a user-supplied distro ISO instead of rebuilding the desktop on an Ubuntu/Kubuntu base. Pardus 25 live ISOs are the first build-capable adapter.
 
 ```bash
 uv run linux-iso probe-iso ~/Downloads/Pardus-25.2-XFCE-amd64.iso
 ./scripts/native-acceptance.sh ~/Downloads/Pardus-25.2-XFCE-amd64.iso
 ```
 
+For a build-only/host-tool retry after a profile was already captured successfully:
+
+```bash
+./scripts/retry-native-acceptance.sh ~/Downloads/Pardus-25.2-XFCE-amd64.iso
+```
+
+This preserves the existing verified profile and rebuilds only the native ISO path.
+
 A KDE profile on a Pardus XFCE ISO installs KDE inside Pardus, embeds the captured profile, installs source applications when resolvable, preserves the Pardus bootloader/installer/repositories, and repacks the ISO. Generic KIWI mode remains available through `stage-iso` / `build-iso`.
 
 
-## Current milestone: v0.4.3
+## Current milestone: v0.5.1
+
+
+### v0.5.1: Native host dependency bootstrap
+
+- Native acceptance checks and installs the complete host remaster/QEMU toolchain before probing the supplied ISO.
+- On Pardus/other apt-based hosts this includes `xorriso`, `squashfs-tools`, `rsync`, QEMU utilities and OVMF when missing.
+- Prevents one-missing-tool-at-a-time failures such as the initial `xorriso` blocker.
 
 
 ### v0.4.3: deterministic Ubuntu archive trust anchor

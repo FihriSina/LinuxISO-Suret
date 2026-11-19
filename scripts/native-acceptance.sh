@@ -17,11 +17,15 @@ RESULT=${LINUX_ISO_NATIVE_RESULT:-"$HOME/linux-iso-native-result"}
 HERE=$(cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$HERE"
 
-echo "== Linux ISO - Suret v0.5.0 Native ISO acceptance =="
+echo "== Linux ISO - Suret v0.5.1 Native ISO acceptance =="
 echo "Base ISO: $BASE_ISO"
 echo "Profile:  $PROFILE"
 echo "Build:    $BUILD"
 echo "Result:   $RESULT"
+
+# Bootstrap every host-side dependency needed by probe, remaster and QEMU.
+# This runs before probe-iso so a missing xorriso can never block acceptance.
+"$HERE/scripts/bootstrap-native-host.sh"
 
 uv sync
 uv run pytest -q

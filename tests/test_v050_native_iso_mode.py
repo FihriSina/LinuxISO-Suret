@@ -52,7 +52,7 @@ def test_v050_cli_exposes_native_commands():
 
 def test_v050_release_version():
     data = Path("pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "0.5.0"' in data
+    assert 'version = "0.5.1"' in data
 
 
 def test_v050_stage_native_generates_pardus_remaster_scripts(tmp_path: Path, monkeypatch):
