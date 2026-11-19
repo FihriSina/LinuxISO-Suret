@@ -888,6 +888,9 @@ def _indent_xml(root: ET.Element) -> None:
 
 
 def _write_config_xml(destination: Path, recipe: BaseRecipe, manifest: dict[str, Any]) -> None:
+    source = manifest.get("source", {}) or {}
+    source_name = str(source.get("distro_name_short") or source.get("distro_name") or "Linux").strip()
+    source_name = re.sub(r"\s+GNU/Linux.*$", "", source_name, flags=re.IGNORECASE).strip() or "Linux"
     root = ET.Element("image", {"schemaversion": "8.5", "name": recipe.image_name})
     description = ET.SubElement(root, "description", {"type": "system"})
     ET.SubElement(description, "author").text = "Linux ISO project"
@@ -927,7 +930,7 @@ def _write_config_xml(destination: Path, recipe: BaseRecipe, manifest: dict[str,
             "pwdformat": "plain",
             "home": "/home/live",
             "groups": "users,sudo,audio,video,plugdev,netdev",
-            "realname": "Linux ISO - Suret Live",
+            "realname": f"{source_name} Live",
             "shell": "/bin/bash",
         },
     )
@@ -969,6 +972,7 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe, manifest: dict[s
     source_name = re.sub(r"\s+GNU/Linux.*$", "", source_name, flags=re.IGNORECASE).strip() or "Linux"
     installer_name = f"Install {source_name}"
     installer_comment = f"Install the captured {source_name} desktop profile"
+    installer_name_tr = f"{source_name}'u Kur" if not source_name.endswith(("a", "e")) else f"{source_name}'yı Kur"
     patcher = destination / "root/usr/lib/linux-iso/patch-calamares.py"
     patcher.parent.mkdir(parents=True, exist_ok=True)
     patcher.write_text(PATCH_CALAMARES, encoding="utf-8")
@@ -1083,6 +1087,7 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe, manifest: dict[s
         "rm -f /etc/sudoers.d/99-linux-iso-live\n"
         "rm -f /etc/apt/sources.list.d/cdrom.sources /etc/apt/sources.list.d/cdrom.list\n"
         "rm -f /usr/bin/linux-iso-installer\n"
+        "rm -f /usr/local/share/applications/linux-iso-installer.desktop\n"
         "find /usr/share/applications -maxdepth 1 -type f -iname '*calamares*.desktop' -delete 2>/dev/null || true\n"
         "if [ \"$target_user\" != live ] && getent passwd live >/dev/null 2>&1; then\n"
         "  if command -v userdel >/dev/null 2>&1; then userdel -r live >/dev/null 2>&1 || true; fi\n"
@@ -1096,6 +1101,7 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe, manifest: dict[s
         "rm -f /usr/lib/linux-iso/patch-calamares.py /usr/lib/linux-iso/patch-calamares-runtime.py\n"
         "rm -f /usr/lib/linux-iso/update-target-initramfs /usr/lib/linux-iso/finalize-target\n"
         "rm -f /usr/lib/linux-iso/apply-target-profile.py /usr/lib/linux-iso/apply-live-profile.py\n"
+        "rm -f /usr/lib/linux-iso/hide-foreign-installers\n"
         "exit 0\n",
         encoding="utf-8",
     )
@@ -1111,6 +1117,49 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe, manifest: dict[s
         encoding="utf-8",
     )
     installer.chmod(0o755)
+
+    hide_foreign_installers = destination / "root/usr/lib/linux-iso/hide-foreign-installers"
+    hide_foreign_installers.write_text(
+        "#!/usr/bin/env python3\n"
+        "from pathlib import Path\n"
+        "import re\n"
+        "\n"
+        "source_name = " + repr(source_name.lower()) + "\n"
+        "mask_dir = Path('/usr/local/share/applications')\n"
+        "mask_dir.mkdir(parents=True, exist_ok=True)\n"
+        "patterns = (\n"
+        "    'install kubuntu', 'kubuntu installer', 'kubuntu-installer',\n"
+        "    'kubuntu-installer-prompt', 'ubiquity', 'oem mode',\n"
+        ")\n"
+        "for desktop in Path('/usr/share/applications').glob('*.desktop'):\n"
+        "    if desktop.name == 'linux-iso-installer.desktop':\n"
+        "        continue\n"
+        "    try:\n"
+        "        text = desktop.read_text(encoding='utf-8', errors='replace')\n"
+        "    except OSError:\n"
+        "        continue\n"
+        "    haystack = (desktop.name + '\\n' + text).lower()\n"
+        "    if not any(pattern in haystack for pattern in patterns):\n"
+        "        continue\n"
+        "    # Never hide a launcher that explicitly belongs to the captured\n"
+        "    # source distribution.  The filter is intended only for the\n"
+        "    # Ubuntu/Kubuntu construction substrate.\n"
+        "    if source_name and source_name in haystack and 'kubuntu' not in haystack:\n"
+        "        continue\n"
+        "    target = mask_dir / desktop.name\n"
+        "    target.write_text('[Desktop Entry]\\nType=Application\\nHidden=true\\nNoDisplay=true\\nX-LinuxISO-Masked=true\\n', encoding='utf-8')\n"
+        "\n"
+        "# Also mask Kubuntu OEM prompt entries that may use unexpected names.\n"
+        "for desktop in Path('/usr/share/applications').glob('*oem*.desktop'):\n"
+        "    try:\n"
+        "        text = desktop.read_text(encoding='utf-8', errors='replace').lower()\n"
+        "    except OSError:\n"
+        "        continue\n"
+        "    if 'kubuntu' in text or 'installer' in text:\n"
+        "        (mask_dir / desktop.name).write_text('[Desktop Entry]\\nType=Application\\nHidden=true\\nNoDisplay=true\\nX-LinuxISO-Masked=true\\n', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    hide_foreign_installers.chmod(0o755)
 
     grub_template = destination / "grub-live-safe.cfg.tmpl"
     grub_template.write_text(
@@ -1152,6 +1201,7 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe, manifest: dict[s
         "test -f /.kconfig && . /.kconfig\n"
         "python3 /usr/lib/linux-iso/patch-calamares.py\n"
         "python3 /usr/lib/linux-iso/apply-live-profile.py\n"
+        "python3 /usr/lib/linux-iso/hide-foreign-installers\n"
         "install -d -m 0755 /etc/sddm.conf.d\n"
         "cat > /etc/sddm.conf.d/99-linux-iso-live.conf <<'EOF'\n"
         "[General]\n"
@@ -1178,16 +1228,21 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe, manifest: dict[s
         "LockOnResume=false\n"
         "Timeout=0\n"
         "EOF\n"
-        "cat > /home/live/Desktop/linux-iso-installer.desktop <<'EOF'\n"
+        "install -d -m 0755 /usr/local/share/applications\n"
+        "cat > /usr/local/share/applications/linux-iso-installer.desktop <<'EOF'\n"
         "[Desktop Entry]\n"
         "Type=Application\n"
         f"Name={installer_name}\n"
+        f"Name[tr]={installer_name_tr}\n"
         f"Comment={installer_comment}\n"
+        f"Comment[tr]={source_name} kurulumunu baslat\n"
         "Exec=linux-iso-installer\n"
         "Icon=system-software-install\n"
         "Terminal=false\n"
         "Categories=System;\n"
         "EOF\n"
+        "chmod 0755 /usr/local/share/applications/linux-iso-installer.desktop\n"
+        "cp /usr/local/share/applications/linux-iso-installer.desktop /home/live/Desktop/linux-iso-installer.desktop\n"
         "chmod 0755 /home/live/Desktop/linux-iso-installer.desktop\n"
         "chown -R live:users /home/live\n"
         "command -v baseSetRunlevel >/dev/null 2>&1 && baseSetRunlevel 5 || true\n"
@@ -1307,7 +1362,8 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe, manifest: dict[s
         "  mkdir -p \"$(dirname -- \"$DISK\")\"\n"
         "  \"$QEMU_IMG\" create -f qcow2 \"$DISK\" \"$DISK_SIZE\"\n"
         "fi\n"
-        "ARGS=(-machine q35 \"${ACCEL[@]}\" -m \"${LINUX_ISO_QEMU_MEMORY:-4096}\" -smp \"${LINUX_ISO_QEMU_CPUS:-2}\" -drive \"file=$DISK,format=qcow2,if=virtio\" -netdev user,id=net0 -device virtio-net-pci,netdev=net0 -vga std -display gtk,gl=off)\n"
+        "if [ \"$MODE\" = live ]; then VM_TITLE='Suret - LIVE ISO'; else VM_TITLE='Suret - INSTALLED SYSTEM'; fi\n"
+        "ARGS=(-name \"$VM_TITLE\" -machine q35 \"${ACCEL[@]}\" -m \"${LINUX_ISO_QEMU_MEMORY:-4096}\" -smp \"${LINUX_ISO_QEMU_CPUS:-2}\" -drive \"file=$DISK,format=qcow2,if=virtio\" -netdev user,id=net0 -device virtio-net-pci,netdev=net0 -vga std -display gtk,gl=off)\n"
         "if [ \"$MODE\" = live ]; then ARGS+=(-boot d -cdrom \"$ISO\" -no-reboot); else ARGS+=(-boot c); fi\n"
         "if [ \"$FIRMWARE\" = uefi ]; then\n"
         "  CODE=\"\"; VARS=\"\"\n"

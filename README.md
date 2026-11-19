@@ -4,7 +4,15 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.3.29
+## Current milestone: v0.3.30
+
+### v0.3.30: source-native live identity + installer decontamination
+
+- Masks Kubuntu/OEM installer desktop entries so the live Kickoff/KRunner shows only the Suret source-branded installer.
+- Uses the captured source distribution name for the live user's visible identity (for example `Pardus Live`).
+- Installs a single source-branded installer application entry (`Pardus'u Kur` in Turkish for a Pardus source profile).
+- Marks QEMU windows as `Suret - LIVE ISO` or `Suret - INSTALLED SYSTEM`.
+- Rewrites the Pardus-only `pardus-mycomputer` desktop action to the portable KDE `dolphin computer:/` equivalent while preserving the visible `Bilgisayar` launcher.
 
 ### v0.3.29: desktop-surface capture + sharp installer icons + live wallpaper truth
 

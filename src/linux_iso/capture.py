@@ -47,6 +47,14 @@ WALLPAPER_IMAGE_EXTENSIONS = {
     ".avif", ".bmp", ".gif", ".jpeg", ".jpg", ".jxl", ".png", ".svg", ".svgz", ".webp"
 }
 
+# Cross-distribution launcher compatibility.  These commands are desktop
+# conveniences from Pardus rather than portable application contracts.  Keep
+# the user-visible launcher while translating the action to an equivalent KDE
+# operation available in the Ubuntu/KDE target.
+DESKTOP_EXEC_COMPAT_REPLACEMENTS = {
+    "pardus-mycomputer": "dolphin computer:/",
+}
+
 
 class CaptureError(RuntimeError):
     pass
@@ -139,6 +147,8 @@ def _copy_file(src: Path, dst: Path, home: Path, kind: str) -> CapturedFile:
                 text = result.text
                 sanitized = result.redacted_lines
             text, rewritten = _rewrite_home(text, home)
+            if src.suffix.lower() == ".desktop":
+                text = _rewrite_desktop_exec_compat(text)
             dst.write_text(text, encoding="utf-8")
             shutil.copymode(src, dst)
         except (UnicodeDecodeError, OSError):
@@ -154,6 +164,30 @@ def _copy_file(src: Path, dst: Path, home: Path, kind: str) -> CapturedFile:
         rewritten_home_paths=rewritten,
         sanitized_lines=sanitized,
     )
+
+
+def _rewrite_desktop_exec_compat(text: str) -> str:
+    """Translate known source-distro-only desktop commands to portable KDE.
+
+    The visible launcher, label and icon remain unchanged.  Only an Exec line
+    whose executable is known to be unavailable on the target is rewritten.
+    Unknown commands are deliberately left untouched rather than guessed.
+    """
+    lines: list[str] = []
+    for line in text.splitlines(keepends=True):
+        stripped = line.rstrip("\r\n")
+        newline = line[len(stripped) :]
+        if not stripped.startswith("Exec="):
+            lines.append(line)
+            continue
+        command = stripped.split("=", 1)[1].strip()
+        executable = command.split(None, 1)[0] if command else ""
+        replacement = DESKTOP_EXEC_COMPAT_REPLACEMENTS.get(executable)
+        if replacement is None:
+            lines.append(line)
+            continue
+        lines.append(f"Exec={replacement}{newline}")
+    return "".join(lines)
 
 
 def _copy_tree(src: Path, payload_home: Path, home: Path, kind: str, excluded: list[str]) -> list[CapturedFile]:
