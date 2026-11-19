@@ -4,7 +4,24 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.3.21
+## Current milestone: v0.3.23
+
+### v0.3.23: KIWI-safe Calamares install-chain hardening
+
+- Replaces Ubuntu/Kubuntu's distro cleanup `packages` job with an offline-safe Suret target finalizer, avoiding package-manager failures during installation.
+- Removes the duplicate Kubuntu `pkgselect` Customize page and its `pkgselectprocess`, snap-selection, `add386arch`, `rmcdrom`, and installer-log jobs while preserving Suret's own categorized `packagechooser` application pages.
+- Cleans live-only SDDM autologin, passwordless sudo, the `live` account, CD-ROM APT entries, and installer launchers from the installed target without `apt-get` or `dpkg`.
+- Records the actual target username so live-user cleanup cannot remove the installed user accidentally.
+- Adds a runtime safety audit that refuses to launch Calamares if known Ubuntu live-ISO-only jobs survive the patch.
+- Keeps the v0.3.20 kernel-copy, v0.3.21 initramfs, and v0.3.22 automirror fixes intact.
+
+
+### v0.3.22: Ubuntu 26.04 Calamares automirror compatibility
+
+- Preserves Ubuntu/Kubuntu's `automirror` job and its mirror/global-storage behavior.
+- Inserts a Suret compatibility shellprocess immediately before `automirror`.
+- Creates `/etc/apt/sources.list` only when it is absent so Ubuntu's automirror can remove the legacy file safely after writing modern `/etc/apt/sources.list.d/ubuntu.sources`.
+- Does not overwrite an existing legacy sources file and keeps the v0.3.20 kernel-copy and v0.3.21 initramfs fixes intact.
 
 
 ### v0.3.21: Ubuntu 26.04 initramfs compatibility
@@ -230,7 +247,7 @@ Clean base system
 
 ## Supported scope
 
-| Area | v0.3.21 |
+| Area | v0.3.23 |
 |---|---|
 | KDE Plasma capture | Yes |
 | active-only appearance capture | Yes |
@@ -257,7 +274,7 @@ Cross-family native package translation is intentionally blocked. A Pacman profi
 
 A source Plasma desktop with customized panels, third-party plasmoids, manually downloaded icons, a custom wallpaper, cursor/theme/font set, KWin additions and a styled terminal must install into a clean VM without manual desktop reconstruction. Optional applications should appear only when selected during installation.
 
-## Development environment diagnostics (v0.3.21)
+## Development environment diagnostics (v0.3.23)
 
 `uv` manages the project environment. The project explicitly enables the `dev`
 dependency group, which contains pytest.

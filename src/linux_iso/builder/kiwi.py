@@ -219,6 +219,16 @@ def patch_settings() -> None:
             "module": "shellprocess",
             "config": "linuxiso_initramfs.conf",
         },
+        {
+            "id": "linuxiso_automirror_compat",
+            "module": "shellprocess",
+            "config": "linuxiso_automirror_compat.conf",
+        },
+        {
+            "id": "linuxiso_target_finalize",
+            "module": "shellprocess",
+            "config": "linuxiso_target_finalize.conf",
+        },
     )
     for wanted in wanted_instances:
         if not any(
@@ -229,20 +239,62 @@ def patch_settings() -> None:
         ):
             instances.append(wanted)
 
+    def is_pkgselect_show(item):
+        return isinstance(item, str) and (item == "pkgselect" or item.startswith("pkgselect@"))
+
+    def is_ubuntu_live_only_exec(item):
+        if not isinstance(item, str):
+            return False
+        return (
+            item == "shellprocess@add386arch"
+            or item == "shellprocess@rmcdrom"
+            or item == "shellprocess@logs"
+            or item == "pkgselectprocess"
+            or item.startswith("pkgselectprocess@")
+            or item.startswith("contextualprocess@pkgselect")
+        )
+
+    finalizer = "shellprocess@linuxiso_target_finalize"
+    finalizer_inserted = False
+    last_exec_phase = None
     for phase in settings.get("sequence", []):
-        if not isinstance(phase, dict) or not isinstance(phase.get("exec"), list):
+        if not isinstance(phase, dict):
             continue
+
+        if isinstance(phase.get("show"), list):
+            phase["show"] = [item for item in phase["show"] if not is_pkgselect_show(item)]
+
+        if not isinstance(phase.get("exec"), list):
+            continue
+        last_exec_phase = phase
         patched = []
         for item in phase["exec"]:
+            if is_ubuntu_live_only_exec(item):
+                continue
+            if isinstance(item, str) and (item == "automirror" or item.startswith("automirror@")):
+                compat = "shellprocess@linuxiso_automirror_compat"
+                if compat not in patched:
+                    patched.append(compat)
             if item == "shellprocess@before_bootloader_kerncopy":
                 item = "shellprocess@linuxiso_before_bootloader_kerncopy"
             if isinstance(item, str) and (item == "initramfs" or item.startswith("initramfs@")):
                 item = "shellprocess@linuxiso_initramfs"
+            if isinstance(item, str) and (item == "packages" or item.startswith("packages@")):
+                item = finalizer
             if item == "contextualprocess@before_bootloader":
                 continue
             if item not in patched:
                 patched.append(item)
+
+        if finalizer in patched:
+            finalizer_inserted = True
+        elif not finalizer_inserted and "umount" in patched:
+            patched.insert(patched.index("umount"), finalizer)
+            finalizer_inserted = True
         phase["exec"] = patched
+
+    if not finalizer_inserted and last_exec_phase is not None:
+        last_exec_phase["exec"].append(finalizer)
 
     SETTINGS.write_text(
         yaml.safe_dump(settings, sort_keys=False, allow_unicode=True),
@@ -277,6 +329,28 @@ def main() -> None:
         yaml.safe_dump(initramfs, sort_keys=False),
         encoding="utf-8",
     )
+    automirror_compat = {
+        "dontChroot": True,
+        "timeout": 30,
+        "script": [
+            "mkdir -p ${ROOT}/etc/apt",
+            "test -e ${ROOT}/etc/apt/sources.list || touch ${ROOT}/etc/apt/sources.list",
+        ],
+    }
+    (MODULES / "linuxiso_automirror_compat.conf").write_text(
+        yaml.safe_dump(automirror_compat, sort_keys=False),
+        encoding="utf-8",
+    )
+    target_finalize = {
+        "dontChroot": False,
+        "timeout": 120,
+        "verbose": True,
+        "script": ["/usr/lib/linux-iso/finalize-target"],
+    }
+    (MODULES / "linuxiso_target_finalize.conf").write_text(
+        yaml.safe_dump(target_finalize, sort_keys=False),
+        encoding="utf-8",
+    )
     patch_text_configs(source, kernel)
     patch_settings()
 
@@ -293,6 +367,35 @@ def main() -> None:
                 stale.append(str(path))
     if stale:
         raise SystemExit("stale Casper kernel path remains: " + ", ".join(stale))
+
+    settings = yaml.safe_load(SETTINGS.read_text(encoding="utf-8")) or {}
+    risky = []
+    for phase in settings.get("sequence", []):
+        if not isinstance(phase, dict):
+            continue
+        for item in phase.get("show", []):
+            if isinstance(item, str) and (item == "pkgselect" or item.startswith("pkgselect@")):
+                risky.append(item)
+        for item in phase.get("exec", []):
+            if not isinstance(item, str):
+                continue
+            if (
+                item == "packages"
+                or item.startswith("packages@")
+                or item == "shellprocess@before_bootloader_kerncopy"
+                or item == "initramfs"
+                or item.startswith("initramfs@")
+                or item == "contextualprocess@before_bootloader"
+                or item == "shellprocess@add386arch"
+                or item == "shellprocess@rmcdrom"
+                or item == "shellprocess@logs"
+                or item == "pkgselectprocess"
+                or item.startswith("pkgselectprocess@")
+                or item.startswith("contextualprocess@pkgselect")
+            ):
+                risky.append(item)
+    if risky:
+        raise SystemExit("unsafe Ubuntu live-ISO Calamares jobs remain: " + ", ".join(risky))
 
 
 if __name__ == "__main__":
@@ -574,6 +677,34 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         encoding="utf-8",
     )
     target_initramfs.chmod(0o755)
+
+    target_finalize = destination / "root/usr/lib/linux-iso/finalize-target"
+    target_finalize.write_text(
+        "#!/bin/sh\n"
+        "set -u\n"
+        "marker=/var/lib/linux-iso/target-username\n"
+        "target_user=''\n"
+        "if [ -r \"$marker\" ]; then IFS= read -r target_user < \"$marker\" || true; fi\n"
+        "rm -f /etc/sddm.conf.d/99-linux-iso-live.conf\n"
+        "rm -f /etc/sudoers.d/99-linux-iso-live\n"
+        "rm -f /etc/apt/sources.list.d/cdrom.sources /etc/apt/sources.list.d/cdrom.list\n"
+        "rm -f /usr/bin/linux-iso-installer\n"
+        "find /usr/share/applications -maxdepth 1 -type f -iname '*calamares*.desktop' -delete 2>/dev/null || true\n"
+        "if [ \"$target_user\" != live ] && getent passwd live >/dev/null 2>&1; then\n"
+        "  if command -v userdel >/dev/null 2>&1; then userdel -r live >/dev/null 2>&1 || true; fi\n"
+        "  if getent passwd live >/dev/null 2>&1; then\n"
+        "    if command -v passwd >/dev/null 2>&1; then passwd -l live >/dev/null 2>&1 || true; fi\n"
+        "    rm -rf /home/live\n"
+        "  fi\n"
+        "fi\n"
+        "rm -f \"$marker\"\n"
+        "rm -f /usr/lib/linux-iso/prepare-calamares-media\n"
+        "rm -f /usr/lib/linux-iso/patch-calamares.py /usr/lib/linux-iso/patch-calamares-runtime.py\n"
+        "rm -f /usr/lib/linux-iso/update-target-initramfs /usr/lib/linux-iso/finalize-target\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    target_finalize.chmod(0o755)
 
     installer = destination / "root/usr/bin/linux-iso-installer"
     installer.parent.mkdir(parents=True, exist_ok=True)

@@ -157,6 +157,10 @@ def run():
         if not username:
             raise RuntimeError("Calamares username is not available")
 
+        marker = root / "var/lib/linux-iso/target-username"
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(str(username) + "\n", encoding="utf-8")
+
         # Appearance/configuration is always applied. Optional applications are user-selected.
         _copy_profile(root, username)
         pending = _install_online(chosen)

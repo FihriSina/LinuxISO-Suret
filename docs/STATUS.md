@@ -1,5 +1,23 @@
 # Status
 
+## v0.3.23 implemented
+
+- Audited the remaining Kubuntu Calamares execution chain for KIWI-incompatible live-ISO assumptions.
+- Replaced the Ubuntu/Kubuntu `packages` cleanup job with a Suret-owned target finalizer that performs no APT or dpkg transactions.
+- Removed the duplicate distro `pkgselect` Customize page and its package/snap processing jobs while keeping Suret's categorized `packagechooser` pages.
+- Removed Ubuntu live-media-only `add386arch`, `rmcdrom`, and installer-log execution jobs.
+- Added target-username handoff so final cleanup safely removes only the temporary `live` user and live-session credentials.
+- Added a pre-launch Calamares safety audit that aborts if known unsafe distro jobs remain after runtime patching.
+- v0.3.20 kernel-copy, v0.3.21 initramfs, and v0.3.22 automirror compatibility remain unchanged.
+- Regression tests cover realistic Kubuntu sequences, instanced package jobs, finalizer idempotence/offline safety, and target-user handoff.
+
+## v0.3.22 implemented
+
+- Added a Calamares `automirror` compatibility job for Ubuntu 26.04 deb822 APT sources.
+- The compatibility job creates the legacy `/etc/apt/sources.list` only when missing, immediately before Ubuntu's `automirror` job; automirror then writes `ubuntu.sources` and removes the temporary legacy path normally.
+- Existing kernel-copy, initramfs, unpackfs, rsync, UEFI and X11 fixes remain unchanged.
+- Regression coverage verifies plain and instanced automirror sequence entries and non-destructive legacy-file handling.
+
 ## v0.3.17 implemented
 
 - ISO firmware is explicitly `efi` so KIWI creates the x86_64 EFI boot path instead of the previous BIOS-only default.
