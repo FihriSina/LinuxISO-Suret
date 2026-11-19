@@ -1,15 +1,14 @@
-# Next milestone - v0.3.17 UEFI live boot and installer validation
+# Next milestone - v0.3.24 installed-desktop fidelity validation
 
-## Highest priority: prove the ISO
+## Highest priority: prove visual fidelity
 
-1. Run `linux-iso verify` on a real active-only KDE profile.
-2. Run `linux-iso build-doctor` and prefer the direct Podman container backend and fall back to VM/host-direct backends.
-3. Run `linux-iso build-iso` for the Ubuntu 26.04 KDE recipe.
-4. Boot the resulting ISO with generated `test-qemu.sh`.
-5. Install with Calamares to a disposable virtual disk.
-6. Boot the installed system.
-7. Compare source and installed Plasma state.
-8. Test online and offline application-selection behavior.
+The ISO build, UEFI live boot, Calamares installation and ISO-less installed-system boot are now proven.
+
+1. Re-capture the Pardus KDE desktop with fidelity schema v2.
+2. Verify/audit the new profile and rebuild the ISO.
+3. Install to a clean QCOW2 disk and boot without the ISO.
+4. Compare source vs installed wallpaper, panel/dock, icon/cursor/theme, fonts, KWin, Dolphin, Konsole and custom assets.
+5. Only after visual fidelity passes, audit launcher/application functionality.
 
 ## Fidelity work during validation
 

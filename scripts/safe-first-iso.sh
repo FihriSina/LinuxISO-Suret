@@ -17,6 +17,12 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+if [ -f "$PROFILE/manifest.yaml" ] && ! grep -Eq '^[[:space:]]*fidelity_schema:[[:space:]]*2([[:space:]]|$)' "$PROFILE/manifest.yaml"; then
+  echo "Profile predates strict fidelity capture v2: $PROFILE" >&2
+  echo "Re-capture it with: uv run linux-iso scan -o $PROFILE" >&2
+  exit 6
+fi
+
 if command -v gdbus >/dev/null 2>&1; then
   RAW=$(gdbus call --session \
     --dest org.freedesktop.ScreenSaver \

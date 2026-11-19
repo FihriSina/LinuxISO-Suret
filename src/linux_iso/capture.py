@@ -6,6 +6,7 @@ import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import quote
 
 import yaml
 
@@ -255,18 +256,83 @@ def _reference_files(roots: list[Path]) -> list[Path]:
     return files
 
 
-def _promoted_reference_root(src: Path, home: Path) -> Path | None:
-    """Promote referenced wallpaper package files to the whole wallpaper bundle."""
-    root = home / ".local/share/wallpapers"
-    try:
-        rel = src.resolve().relative_to(root.resolve())
-    except (OSError, ValueError):
-        return None
-    if len(rel.parts) >= 2:
-        candidate = root / rel.parts[0]
-        if candidate.is_dir():
-            return candidate
+def _promoted_reference_root(src: Path, home: Path) -> tuple[Path, Path] | None:
+    """Promote a referenced wallpaper file to its complete wallpaper bundle.
+
+    The returned tuple is ``(source_root, target_home_relative_root)``. System
+    wallpapers are deliberately copied into the target user's local wallpaper
+    directory so the visual result is independent of the target distribution.
+    """
+    roots = [
+        (home / ".local/share/wallpapers", Path(".local/share/wallpapers")),
+        (Path("/usr/local/share/wallpapers"), Path(".local/share/wallpapers")),
+        (Path("/usr/share/wallpapers"), Path(".local/share/wallpapers")),
+    ]
+    for root, target_root in roots:
+        try:
+            rel = src.resolve().relative_to(root.resolve())
+        except (OSError, ValueError):
+            continue
+        if len(rel.parts) >= 2:
+            candidate = root / rel.parts[0]
+            if candidate.is_dir():
+                return candidate, target_root / rel.parts[0]
     return None
+
+
+def _external_asset_target(src: Path) -> Path:
+    digest = sha256_file(src)[:12]
+    safe_name = src.name.replace("/", "_")
+    return Path(".local/share/linux-iso/captured-assets") / f"{digest}-{safe_name}"
+
+
+def _payload_path_for_destination(payload_home: Path, destination: str) -> Path | None:
+    prefix = "{{HOME}}/"
+    if destination == "{{HOME}}":
+        return payload_home
+    if not destination.startswith(prefix):
+        return None
+    return payload_home / destination[len(prefix):]
+
+
+def _rewrite_captured_references(
+    items: list[CapturedFile],
+    payload_home: Path,
+    replacements: dict[str, str],
+) -> None:
+    if not replacements:
+        return
+    ordered = sorted(replacements.items(), key=lambda pair: len(pair[0]), reverse=True)
+    for item in items:
+        path = _payload_path_for_destination(payload_home, item.destination)
+        if path is None or not path.is_file():
+            continue
+        try:
+            if path.stat().st_size > 8 * 1024 * 1024:
+                continue
+            text = path.read_text(encoding="utf-8", errors="strict")
+        except (OSError, UnicodeDecodeError):
+            continue
+        updated = text
+        rewrites = 0
+        for old, new in ordered:
+            encoded_old = quote(old, safe="/")
+            encoded_new = quote(new, safe="/{}")
+            variants = (
+                (f"file://{old}", f"file://{new}"),
+                (f"file://{encoded_old}", f"file://{encoded_new}"),
+                (old, new),
+                (encoded_old, encoded_new),
+            )
+            for old_token, new_token in variants:
+                count = updated.count(old_token)
+                if count:
+                    updated = updated.replace(old_token, new_token)
+                    rewrites += count
+        if updated != text:
+            path.write_text(updated, encoding="utf-8")
+            item.sha256 = sha256_file(path)
+            item.rewritten_home_paths += rewrites
 
 
 def _expanded_active_components(home: Path) -> list[dict[str, object]]:
@@ -467,13 +533,21 @@ def capture_profile(
             provider, package_name = owner
             reason = f"Provides active KDE {kind}: {name}"
             _mark_required_package(packages, package_index, provider, package_name, reason)
+            # Do not rely on the target distro shipping byte-identical theme assets.
+            # Bundle the exact active component into the user's local data path as
+            # well; user-local KDE assets override distro defaults while the package
+            # remains required for any runtime dependencies it may provide.
+            captured_assets.extend(
+                _copy_component(system_path, payload_home, target_relative, home, excluded)
+            )
             detail = {
                 "kind": kind,
                 "name": name,
                 "source": "system-package",
                 "provider": provider,
                 "package": package_name,
-                "bundled": False,
+                "bundled": True,
+                "bundle_root": f"{{{{HOME}}}}/{target_relative.as_posix()}",
             }
             if inherited:
                 detail["inherited"] = True
@@ -496,27 +570,60 @@ def capture_profile(
             component_details.append(detail)
 
     # Catch one-off icon/wallpaper/font paths referenced by active configs,
-    # active appearance packages, launchers and terminal configuration.
-    referenced = find_referenced_assets(_reference_files(reference_roots), home)
+    # active appearance packages, launchers and terminal configuration. Capture
+    # external/system paths too, then rewrite their references to portable user-
+    # local destinations so Pardus assets cannot silently fall back to Kubuntu.
+    referenced = find_referenced_assets(
+        _reference_files(reference_roots), home, include_external=True
+    )
     promoted_roots: set[Path] = set()
+    replacements: dict[str, str] = {}
+    home_resolved = home.resolve()
     for src in referenced:
         if path_is_sensitive(src):
             continue
         promoted = _promoted_reference_root(src, home)
-        if promoted is not None and promoted not in promoted_roots:
-            promoted_roots.add(promoted)
-            captured_assets.extend(
-                _copy_tree(promoted, payload_home, home, "referenced-bundle", excluded)
-            )
+        if promoted is not None:
+            promoted_src, target_relative = promoted
+            if promoted_src not in promoted_roots:
+                promoted_roots.add(promoted_src)
+                captured_assets.extend(
+                    _copy_external_tree(
+                        promoted_src,
+                        payload_home / target_relative,
+                        home,
+                        "referenced-bundle",
+                        excluded,
+                    )
+                )
+            try:
+                promoted_src.resolve().relative_to(home_resolved)
+            except ValueError:
+                replacements[str(promoted_src.resolve())] = (
+                    f"{{{{HOME}}}}/{target_relative.as_posix()}"
+                )
             continue
-        relative = _safe_relative(src, home)
-        destination = payload_home / relative
-        if destination.exists():
-            continue
-        captured_assets.append(_copy_file(src, destination, home, "referenced-asset"))
+
+        try:
+            relative = src.resolve().relative_to(home_resolved)
+        except ValueError:
+            target_relative = _external_asset_target(src)
+            destination = payload_home / target_relative
+            if not destination.exists():
+                captured_assets.append(
+                    _copy_file(src, destination, home, "referenced-external-asset")
+                )
+            replacements[str(src.resolve())] = f"{{{{HOME}}}}/{target_relative.as_posix()}"
+        else:
+            destination = payload_home / relative
+            if not destination.exists():
+                captured_assets.append(_copy_file(src, destination, home, "referenced-asset"))
 
     captured_configs = _dedupe_captured(captured_configs)
     captured_assets = _dedupe_captured(captured_assets)
+    _rewrite_captured_references(
+        captured_configs + captured_assets, payload_home, replacements
+    )
     packages.sort(key=lambda p: (p.category, p.provider, p.name.lower()))
     desktop = DesktopProfile(
         desktop=desktop_name,
@@ -552,6 +659,7 @@ def capture_profile(
             "application_install_mode": "online-selective",
             "profile_version": __version__,
             "asset_mode": asset_mode,
+            "fidelity_schema": 2,
         },
     )
 

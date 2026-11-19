@@ -205,6 +205,24 @@ def patch_text_configs(source: str, kernel: str) -> None:
                 path.write_text(updated, encoding="utf-8")
 
 
+def patch_branding_text() -> None:
+    for base in (Path("/etc/calamares/branding"), Path("/usr/share/calamares/branding")):
+        if not base.is_dir():
+            continue
+        for path in base.rglob("*"):
+            if not path.is_file() or path.suffix.lower() not in {".desc", ".conf", ".txt", ".html", ".qml"}:
+                continue
+            try:
+                if path.stat().st_size > 2 * 1024 * 1024:
+                    continue
+                text = path.read_text(encoding="utf-8", errors="strict")
+            except (OSError, UnicodeDecodeError):
+                continue
+            updated = text.replace("Kubuntu", "Linux ISO - Suret")
+            if updated != text:
+                path.write_text(updated, encoding="utf-8")
+
+
 def patch_settings() -> None:
     settings = yaml.safe_load(SETTINGS.read_text(encoding="utf-8")) or {}
     instances = settings.setdefault("instances", [])
@@ -352,6 +370,7 @@ def main() -> None:
         encoding="utf-8",
     )
     patch_text_configs(source, kernel)
+    patch_branding_text()
     patch_settings()
 
     stale = []
@@ -412,6 +431,39 @@ from pathlib import Path
 
 PAYLOAD = Path("/usr/share/linux-iso/profile/payload/home")
 TARGET = Path("/home/live")
+PERSONALIZATION_PATHS = (
+    "Desktop",
+    ".config/kdeglobals",
+    ".config/kwinrc",
+    ".config/plasmashellrc",
+    ".config/plasmarc",
+    ".config/plasma-org.kde.plasma.desktop-appletsrc",
+    ".config/kglobalshortcutsrc",
+    ".config/kcminputrc",
+    ".config/kscreenlockerrc",
+    ".config/ksplashrc",
+    ".config/breezerc",
+    ".config/dolphinrc",
+    ".config/konsolerc",
+    ".config/mimeapps.list",
+    ".config/gtk-3.0",
+    ".config/gtk-4.0",
+    ".config/qt5ct",
+    ".config/qt6ct",
+    ".config/Kvantum",
+    ".local/share/plasma",
+    ".local/share/aurorae",
+    ".local/share/kwin",
+    ".local/share/color-schemes",
+    ".local/share/icons",
+    ".icons",
+    ".local/share/themes",
+    ".themes",
+    ".local/share/fonts",
+    ".fonts",
+    ".local/share/konsole",
+    ".local/share/applications",
+)
 
 
 def ids():
@@ -422,11 +474,22 @@ def ids():
     raise RuntimeError("live user is missing")
 
 
+def clear_vendor_personalization():
+    for relative in PERSONALIZATION_PATHS:
+        path = TARGET / relative
+        if path.is_symlink() or path.is_file():
+            path.unlink(missing_ok=True)
+        elif path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+
+
 def main():
     if not PAYLOAD.is_dir():
         raise SystemExit("Linux ISO profile payload is missing")
     TARGET.mkdir(parents=True, exist_ok=True)
     uid, gid = ids()
+    clear_vendor_personalization()
+    copied = 0
     for src in PAYLOAD.rglob("*"):
         rel = src.relative_to(PAYLOAD)
         dst = TARGET / rel
@@ -445,7 +508,14 @@ def main():
             dst.write_text(text.replace("{{HOME}}", "/home/live"), encoding="utf-8")
             shutil.copymode(src, dst)
         os.chown(dst, uid, gid)
+        copied += 1
     os.chown(TARGET, uid, gid)
+    marker = TARGET / ".local/state/linux-iso/profile-applied"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(f"files={copied}\n", encoding="utf-8")
+    os.chown(marker.parent.parent, uid, gid)
+    os.chown(marker.parent, uid, gid)
+    os.chown(marker, uid, gid)
 
 
 if __name__ == "__main__":

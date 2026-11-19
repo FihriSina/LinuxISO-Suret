@@ -78,6 +78,15 @@ def verify_profile(profile: Path) -> VerificationResult:
 
     warnings: list[str] = []
     errors: list[str] = []
+    try:
+        fidelity_schema = int(restore.get("fidelity_schema", 0) or 0)
+    except (TypeError, ValueError):
+        fidelity_schema = 0
+    if fidelity_schema < 2:
+        warnings.append(
+            "Profile predates strict-fidelity capture v2; re-run 'linux-iso scan' before the next ISO build "
+            "to bundle external wallpapers and exact active appearance components."
+        )
     stats: dict[str, int | str] = {
         "asset_mode": restore.get("asset_mode", "legacy/all"),
         "manifest_files": 0,

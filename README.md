@@ -4,7 +4,16 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.3.23
+## Current milestone: v0.3.24
+
+### v0.3.24: strict desktop-fidelity capture and restore
+
+- Bundles the exact active KDE appearance components even when they are package-owned on Pardus, so Ubuntu/Kubuntu theme versions cannot silently replace the source icon/cursor/Plasma/color/decoration assets.
+- Captures wallpapers and other referenced local assets outside the source home (including system wallpaper paths), relocates them into portable user-local storage, and rewrites configuration references.
+- Clears Kubuntu skeleton/vendor personalization from the live and installed user before applying the Suret profile, removing leftover `HOW-TO Guides`, `Kubuntu Website`, vendor panel state and similar defaults.
+- Writes profile-application markers for live/installed verification and replaces visible Calamares `Kubuntu` text with `Linux ISO - Suret`.
+- Adds fidelity schema v2 to newly captured profiles; profiles captured before this change should be re-scanned before rebuilding.
+- Real QEMU validation has now completed the full install chain and booted successfully from the installed QCOW2 disk; the active gate is visual fidelity.
 
 ### v0.3.23: KIWI-safe Calamares install-chain hardening
 
@@ -247,7 +256,7 @@ Clean base system
 
 ## Supported scope
 
-| Area | v0.3.23 |
+| Area | v0.3.24 |
 |---|---|
 | KDE Plasma capture | Yes |
 | active-only appearance capture | Yes |
@@ -264,7 +273,7 @@ Clean base system
 | Ubuntu 26.04 KDE KIWI recipe | Experimental |
 | Calamares integration | Experimental |
 | Live-user + QEMU helper generation | Yes |
-| QEMU boot/install validation | Pending real-system run |
+| QEMU boot/install validation | Passed: install + ISO-less installed boot |
 | GNOME/Cinnamon/XFCE | Not yet |
 | Arch/Fedora/openSUSE image recipes | Not yet |
 
@@ -274,7 +283,7 @@ Cross-family native package translation is intentionally blocked. A Pacman profi
 
 A source Plasma desktop with customized panels, third-party plasmoids, manually downloaded icons, a custom wallpaper, cursor/theme/font set, KWin additions and a styled terminal must install into a clean VM without manual desktop reconstruction. Optional applications should appear only when selected during installation.
 
-## Development environment diagnostics (v0.3.23)
+## Development environment diagnostics (v0.3.24)
 
 `uv` manages the project environment. The project explicitly enables the `dev`
 dependency group, which contains pytest.

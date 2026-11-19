@@ -23,6 +23,40 @@ CATALOG = Path("/usr/share/linux-iso/profile/catalog.json")
 PENDING = Path("var/lib/linux-iso/pending-apps.json")
 PAYLOAD = Path("/usr/share/linux-iso/profile/payload/home")
 
+PERSONALIZATION_PATHS = (
+    "Desktop",
+    ".config/kdeglobals",
+    ".config/kwinrc",
+    ".config/plasmashellrc",
+    ".config/plasmarc",
+    ".config/plasma-org.kde.plasma.desktop-appletsrc",
+    ".config/kglobalshortcutsrc",
+    ".config/kcminputrc",
+    ".config/kscreenlockerrc",
+    ".config/ksplashrc",
+    ".config/breezerc",
+    ".config/dolphinrc",
+    ".config/konsolerc",
+    ".config/mimeapps.list",
+    ".config/gtk-3.0",
+    ".config/gtk-4.0",
+    ".config/qt5ct",
+    ".config/qt6ct",
+    ".config/Kvantum",
+    ".local/share/plasma",
+    ".local/share/aurorae",
+    ".local/share/kwin",
+    ".local/share/color-schemes",
+    ".local/share/icons",
+    ".icons",
+    ".local/share/themes",
+    ".themes",
+    ".local/share/fonts",
+    ".fonts",
+    ".local/share/konsole",
+    ".local/share/applications",
+)
+
 
 def _selected_ids(catalog):
     selected = set()
@@ -64,13 +98,24 @@ def _target_ids(root, username):
     raise RuntimeError("Could not resolve target user UID/GID")
 
 
+def _clear_vendor_personalization(target_home):
+    for relative in PERSONALIZATION_PATHS:
+        path = target_home / relative
+        if path.is_symlink() or path.is_file():
+            path.unlink(missing_ok=True)
+        elif path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+
+
 def _copy_profile(root, username):
     if not PAYLOAD.is_dir():
         raise RuntimeError("Profile payload is missing")
     target_home = root / "home" / username
     target_home.mkdir(parents=True, exist_ok=True)
     uid, gid = _target_ids(root, username)
+    _clear_vendor_personalization(target_home)
 
+    copied = 0
     for src in PAYLOAD.rglob("*"):
         rel = src.relative_to(PAYLOAD)
         dst = target_home / rel
@@ -89,6 +134,11 @@ def _copy_profile(root, username):
             dst.write_text(text.replace("{{HOME}}", f"/home/{username}"), encoding="utf-8")
             shutil.copymode(src, dst)
         os.chown(dst, uid, gid)
+        copied += 1
+
+    marker = root / "var/lib/linux-iso/profile-applied"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(f"user={username}\nfiles={copied}\n", encoding="utf-8")
 
 
 def _target_call(command):

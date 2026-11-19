@@ -1,5 +1,15 @@
 # Status
 
+## v0.3.24 implemented
+
+- Real QEMU/Calamares installation completed successfully and the installed QCOW2 system booted without the ISO.
+- Strict-fidelity capture now bundles exact active system-owned KDE appearance assets instead of relying only on target-distro package versions.
+- Referenced wallpapers/assets outside the source home are copied into portable user-local payload locations and their configuration paths are rewritten.
+- Live and target users are cleared of Kubuntu skeleton/vendor personalization before the captured profile is applied.
+- Profile-application markers make it possible to verify that the live and installed user actually received the captured payload.
+- Calamares-visible Kubuntu product text is rewritten to Linux ISO - Suret while the technical base remains Ubuntu/Kubuntu 26.04.
+- Newly captured profiles carry fidelity schema v2; a fresh scan is required to benefit from these changes.
+
 ## v0.3.23 implemented
 
 - Audited the remaining Kubuntu Calamares execution chain for KIWI-incompatible live-ISO assumptions.
