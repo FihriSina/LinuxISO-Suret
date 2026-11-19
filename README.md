@@ -4,7 +4,26 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.3.33
+## Current milestone: v0.4.0
+
+### v0.4.0: final acceptance / one-window install convergence
+
+- Adds `scripts/final-acceptance.sh` as the single end-to-end acceptance command: fresh scan, verify, audit, portability, ISO build, then QEMU installer launch.
+- QEMU now defaults to `install` mode, creates a clean test disk, boots the ISO only once, and after Calamares Restart automatically continues from the installed disk in the same QEMU process.
+- Persists a per-test OVMF VARS image so UEFI boot entries survive installer reboot and later installed-system replay.
+- Adds a first-login KDE convergence hook that refreshes application/icon caches and reapplies the captured visible wallpaper after Plasma/DBus is live, preventing target-distro wallpaper fallback.
+- Records the final portable visible-wallpaper path in fidelity schema v9 and verifies the asset before ISO staging.
+- Optional APT applications install independently so one unavailable source-distro package does not block all other selected packages.
+- Retains v0.3.20-v0.3.33 Calamares, initramfs, automirror, cleanup, desktop-surface, source branding, GRUB, SDDM, avatar, KIO, launcher and schema-gate fixes.
+- Project regression suite: 127 tests.
+
+For the final acceptance cycle on the source desktop, run only:
+
+```bash
+./scripts/final-acceptance.sh
+```
+
+The QEMU window is intentionally kept alive across installer reboot. After clicking **Done / Restart** in Calamares, do not close QEMU; the same VM should boot the installed disk automatically.
 
 
 ### v0.3.33: safe-build profile schema gate fix

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import subprocess
@@ -916,6 +917,112 @@ if __name__ == "__main__":
 """
 
 
+FIRST_LOGIN_FIDELITY_SCRIPT = r'''#!/usr/bin/env python3
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import time
+from pathlib import Path
+
+STATE = Path("/usr/share/linux-iso/profile/visible-state.json")
+MARKER = Path.home() / ".local/state/linux-iso/first-login-fidelity-v1"
+
+
+def run(command: list[str]) -> bool:
+    try:
+        return subprocess.run(
+            command,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        ).returncode == 0
+    except OSError:
+        return False
+
+
+def qdbus_tool() -> str | None:
+    for name in ("qdbus6", "qdbus-qt6", "qdbus"):
+        tool = shutil.which(name)
+        if tool:
+            return tool
+    return None
+
+
+def apply_wallpaper(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    qdbus = qdbus_tool()
+    if qdbus is None:
+        return False
+    uri_js = json.dumps(path.resolve().as_uri())
+    script = (
+        "var u=" + uri_js + "; var ds=desktops(); "
+        "for (var i=0; i<ds.length; ++i) { "
+        "var d=ds[i]; d.wallpaperPlugin='org.kde.image'; "
+        "d.currentConfigGroup=['Wallpaper','org.kde.image','General']; "
+        "d.writeConfig('Image',u); }"
+    )
+    for _attempt in range(30):
+        if run([
+            qdbus,
+            "org.kde.plasmashell",
+            "/PlasmaShell",
+            "org.kde.PlasmaShell.evaluateScript",
+            script,
+        ]):
+            return True
+        time.sleep(1)
+    return False
+
+
+def refresh_desktop_database() -> None:
+    for tool in ("kbuildsycoca6", "kbuildsycoca5"):
+        path = shutil.which(tool)
+        if path:
+            run([path, "--noincremental"])
+            break
+
+
+def enforce_icon_theme(theme: str) -> None:
+    if not theme:
+        return
+    tool = shutil.which("kwriteconfig6") or shutil.which("kwriteconfig5")
+    if tool:
+        run([tool, "--file", "kdeglobals", "--group", "Icons", "--key", "Theme", theme])
+
+
+def main() -> int:
+    if MARKER.exists():
+        return 0
+    try:
+        state = json.loads(STATE.read_text(encoding="utf-8")) if STATE.is_file() else {}
+    except Exception:
+        state = {}
+
+    refresh_desktop_database()
+    enforce_icon_theme(str(state.get("icon_theme") or ""))
+
+    wallpaper = str(state.get("wallpaper") or "")
+    wallpaper_ok = True
+    if wallpaper:
+        wallpaper = wallpaper.replace("{{HOME}}", str(Path.home()))
+        wallpaper_ok = apply_wallpaper(Path(wallpaper))
+
+    if not wallpaper_ok:
+        return 1
+
+    MARKER.parent.mkdir(parents=True, exist_ok=True)
+    MARKER.write_text("ok\n", encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+'''
+
+
 def _read_manifest(profile: Path) -> dict[str, Any]:
     path = profile / "manifest.yaml"
     if not path.is_file():
@@ -1051,6 +1158,25 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe, manifest: dict[s
     installer_name = f"Install {source_name}"
     installer_comment = f"Install the captured {source_name} desktop profile"
     installer_name_tr = f"{source_name}'u Kur" if not source_name.endswith(("a", "e")) else f"{source_name}'yı Kur"
+
+    restore_meta = manifest.get("restore", {}) or {}
+    visible_wallpaper = str(restore_meta.get("visible_wallpaper") or "")
+    icon_theme = ""
+    for component in manifest.get("desktop", {}).get("component_details", []):
+        if component.get("kind") == "icon-theme" and not component.get("inherited"):
+            icon_theme = str(component.get("name") or "")
+            if icon_theme:
+                break
+    visible_state = {
+        "wallpaper": visible_wallpaper,
+        "icon_theme": icon_theme,
+        "source_name": source_name,
+        "fidelity_schema": int(restore_meta.get("fidelity_schema", 0) or 0),
+    }
+    state_file = destination / "root/usr/share/linux-iso/profile/visible-state.json"
+    state_file.parent.mkdir(parents=True, exist_ok=True)
+    state_file.write_text(json.dumps(visible_state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
     patcher = destination / "root/usr/lib/linux-iso/patch-calamares.py"
     patcher.parent.mkdir(parents=True, exist_ok=True)
     patcher.write_text(PATCH_CALAMARES, encoding="utf-8")
@@ -1067,6 +1193,22 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe, manifest: dict[s
     target_profile = destination / "root/usr/lib/linux-iso/apply-target-profile.py"
     target_profile.write_text(TARGET_PROFILE_SCRIPT, encoding="utf-8")
     target_profile.chmod(0o755)
+
+    first_login = destination / "root/usr/lib/linux-iso/apply-first-login-fidelity.py"
+    first_login.write_text(FIRST_LOGIN_FIDELITY_SCRIPT, encoding="utf-8")
+    first_login.chmod(0o755)
+    autostart = destination / "root/etc/xdg/autostart/linux-iso-first-login-fidelity.desktop"
+    autostart.parent.mkdir(parents=True, exist_ok=True)
+    autostart.write_text(
+        "[Desktop Entry]\n"
+        "Type=Application\n"
+        "Name=Linux ISO first-login fidelity\n"
+        "Exec=/usr/lib/linux-iso/apply-first-login-fidelity.py\n"
+        "OnlyShowIn=KDE;\n"
+        "NoDisplay=true\n"
+        "X-KDE-autostart-after=panel\n",
+        encoding="utf-8",
+    )
 
     media_helper = destination / "root/usr/lib/linux-iso/prepare-calamares-media"
     media_helper.write_text(
@@ -1435,42 +1577,54 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe, manifest: dict[s
         "set -Eeuo pipefail\n"
         "HERE=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
         "RESULT=${1:-${LINUX_ISO_RESULT_DIR:-${HERE}-result}}\n"
-        "MODE=${2:-${LINUX_ISO_QEMU_MODE:-live}}\n"
+        "MODE=${2:-${LINUX_ISO_QEMU_MODE:-install}}\n"
+        "if [ \"$MODE\" != install ] && [ \"$MODE\" != live ] && [ \"$MODE\" != installed ]; then echo 'Mode must be install, live, or installed' >&2; exit 2; fi\n"
         "ISO=''\n"
-        "if [ \"$MODE\" = live ]; then ISO=$(find \"$RESULT\" -maxdepth 2 -type f -name '*.iso' -print | sort | tail -n 1); fi\n"
-        "if [ \"$MODE\" = live ] && [ -z \"${ISO:-}\" ]; then echo \"No ISO found under $RESULT\" >&2; exit 2; fi\n"
-        "if [ \"$MODE\" != live ] && [ \"$MODE\" != installed ]; then echo 'Mode must be live or installed' >&2; exit 2; fi\n"
+        "if [ \"$MODE\" != installed ]; then ISO=$(find \"$RESULT\" -maxdepth 2 -type f -name '*.iso' -print | sort | tail -n 1); fi\n"
+        "if [ \"$MODE\" != installed ] && [ -z \"${ISO:-}\" ]; then echo \"No ISO found under $RESULT\" >&2; exit 2; fi\n"
         "QEMU=$(command -v qemu-system-x86_64 || command -v qemu-kvm || true)\n"
         "if [ -z \"$QEMU\" ]; then echo 'qemu-system-x86_64 not found' >&2; exit 2; fi\n"
         "ACCEL=(-accel tcg,thread=single -cpu max,la57=off)\n"
         "if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then ACCEL=(-enable-kvm -cpu host); fi\n"
         "FIRMWARE=${LINUX_ISO_QEMU_FIRMWARE:-uefi}\n"
-        "DISK=${LINUX_ISO_QEMU_DISK:-$RESULT/linux-iso-suret-test.qcow2}\n"
+        "DEFAULT_DISK=$RESULT/linux-iso-suret-test.qcow2\n"
+        "DISK=${LINUX_ISO_QEMU_DISK:-$DEFAULT_DISK}\n"
         "DISK_SIZE=${LINUX_ISO_QEMU_DISK_SIZE:-40G}\n"
+        "VARS_STORE=${LINUX_ISO_QEMU_VARS:-$RESULT/linux-iso-suret-test-OVMF_VARS.fd}\n"
         "QEMU_IMG=$(command -v qemu-img || true)\n"
+        "if [ \"$MODE\" = install ]; then\n"
+        "  if [ \"$DISK\" = \"$DEFAULT_DISK\" ] || [ \"${LINUX_ISO_QEMU_RESET_DISK:-0}\" = 1 ]; then rm -f \"$DISK\" \"$VARS_STORE\"; fi\n"
+        "fi\n"
         "if [ ! -f \"$DISK\" ]; then\n"
         "  if [ \"$MODE\" = installed ]; then echo \"Installed-system disk not found: $DISK\" >&2; exit 4; fi\n"
         "  if [ -z \"$QEMU_IMG\" ]; then echo 'qemu-img not found; cannot create installer test disk' >&2; exit 4; fi\n"
         "  mkdir -p \"$(dirname -- \"$DISK\")\"\n"
         "  \"$QEMU_IMG\" create -f qcow2 \"$DISK\" \"$DISK_SIZE\"\n"
         "fi\n"
-        "if [ \"$MODE\" = live ]; then VM_TITLE='Suret - LIVE ISO'; else VM_TITLE='Suret - INSTALLED SYSTEM'; fi\n"
+        "case \"$MODE\" in install) VM_TITLE='Suret - INSTALL / then INSTALLED SYSTEM';; live) VM_TITLE='Suret - LIVE ISO';; installed) VM_TITLE='Suret - INSTALLED SYSTEM';; esac\n"
         "ARGS=(-name \"$VM_TITLE\" -machine q35 \"${ACCEL[@]}\" -m \"${LINUX_ISO_QEMU_MEMORY:-4096}\" -smp \"${LINUX_ISO_QEMU_CPUS:-2}\" -drive \"file=$DISK,format=qcow2,if=virtio\" -netdev user,id=net0 -device virtio-net-pci,netdev=net0 -vga std -display gtk,gl=off)\n"
-        "if [ \"$MODE\" = live ]; then ARGS+=(-boot d -cdrom \"$ISO\" -no-reboot); else ARGS+=(-boot c); fi\n"
+        "if [ \"$MODE\" = install ]; then ARGS+=(-boot once=d,menu=on -cdrom \"$ISO\"); elif [ \"$MODE\" = live ]; then ARGS+=(-boot d -cdrom \"$ISO\"); else ARGS+=(-boot c); fi\n"
         "if [ \"$FIRMWARE\" = uefi ]; then\n"
         "  CODE=\"\"; VARS=\"\"\n"
         "  for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd; do [ -f \"$f\" ] && CODE=\"$f\" && break; done\n"
         "  for f in /usr/share/OVMF/OVMF_VARS_4M.fd /usr/share/OVMF/OVMF_VARS.fd; do [ -f \"$f\" ] && VARS=\"$f\" && break; done\n"
         "  if [ -z \"$CODE\" ] || [ -z \"$VARS\" ]; then echo 'OVMF UEFI firmware not found. Install the ovmf package or set LINUX_ISO_QEMU_FIRMWARE=bios.' >&2; exit 3; fi\n"
-        "  VARS_COPY=$(mktemp --tmpdir suret-OVMF-VARS.XXXXXX.fd)\n"
-        "  trap 'rm -f \"$VARS_COPY\"' EXIT INT TERM\n"
-        "  cp \"$VARS\" \"$VARS_COPY\"\n"
-        "  ARGS+=(-drive \"if=pflash,format=raw,readonly=on,file=$CODE\" -drive \"if=pflash,format=raw,file=$VARS_COPY\")\n"
+        "  if [ ! -f \"$VARS_STORE\" ]; then cp \"$VARS\" \"$VARS_STORE\"; fi\n"
+        "  ARGS+=(-drive \"if=pflash,format=raw,readonly=on,file=$CODE\" -drive \"if=pflash,format=raw,file=$VARS_STORE\")\n"
         "elif [ \"$FIRMWARE\" != bios ]; then\n"
         "  echo \"Unknown LINUX_ISO_QEMU_FIRMWARE: $FIRMWARE (use uefi or bios)\" >&2; exit 2\n"
         "fi\n"
-        "if [ \"$MODE\" = live ]; then echo \"Booting live ISO ($FIRMWARE): $ISO\"; else echo \"Booting installed system ($FIRMWARE): $DISK\"; fi\n"
-        "\"$QEMU\" \"${ARGS[@]}\"\n",
+        "if [ \"$MODE\" = install ]; then\n"
+        "  echo \"Booting clean installer test ($FIRMWARE): $ISO\"\n"
+        "  echo 'After Calamares -> Done/Restart, keep this QEMU window open: it will reboot directly into the installed disk.'\n"
+        "elif [ \"$MODE\" = live ]; then echo \"Booting live ISO ($FIRMWARE): $ISO\"; else echo \"Booting installed system ($FIRMWARE): $DISK\"; fi\n"
+        "set +e\n"
+        "\"$QEMU\" \"${ARGS[@]}\"\n"
+        "RC=$?\n"
+        "set -e\n"
+        "echo \"QEMU exited with code $RC\"\n"
+        "if [ \"$MODE\" = install ] && [ -f \"$DISK\" ]; then echo \"Installed-disk replay: $0 $RESULT installed\"; fi\n"
+        "exit \"$RC\"\n",
         encoding="utf-8",
     )
     qemu_sh.chmod(0o755)

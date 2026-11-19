@@ -1,3 +1,7 @@
+# Post-v0.4.0
+
+v0.4.0 is the final acceptance baseline for the Ubuntu/KDE recipe. Future work should be treated as new scope (for example native Fedora/Anaconda or native Pardus base recipes), not as blockers for the current Suret pipeline.
+
 # Next milestone - v0.3.33 acceptance
 
 1. Reuse the freshly captured v8 profile or re-scan once.

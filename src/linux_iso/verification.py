@@ -84,9 +84,9 @@ def verify_profile(profile: Path) -> VerificationResult:
         fidelity_schema = int(restore.get("fidelity_schema", 0) or 0)
     except (TypeError, ValueError):
         fidelity_schema = 0
-    if fidelity_schema < 8:
+    if fidelity_schema < 9:
         warnings.append(
-            "Profile predates desktop-surface fidelity capture v8; re-run 'linux-iso scan' before the next ISO build "
+            "Profile predates first-login convergence fidelity capture v9; re-run 'linux-iso scan' before the next ISO build "
             "to preserve source distro branding, Kickoff favorites/order, avatar, visible desktop launchers, and wallpaper fidelity."
         )
     stats: dict[str, int | str] = {
@@ -243,6 +243,13 @@ def verify_profile(profile: Path) -> VerificationResult:
     # falls back to the target distribution wallpaper, which looks like a
     # successful restore even though visual fidelity was lost.
     plasma_config = payload_root / ".config/plasma-org.kde.plasma.desktop-appletsrc"
+    if fidelity_schema >= 9:
+        visible_wallpaper = str(restore.get("visible_wallpaper") or "")
+        if visible_wallpaper:
+            wallpaper_path = _payload_path(profile, visible_wallpaper, placeholder)
+            if wallpaper_path is None or not wallpaper_path.is_file():
+                errors.append(f"Visible wallpaper is missing from payload: {visible_wallpaper}")
+
     if fidelity_schema >= 3:
         if not plasma_config.is_file():
             warnings.append("Strict-fidelity profile has no Plasma desktop/panel configuration to validate.")

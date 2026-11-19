@@ -800,6 +800,39 @@ def _apply_slideshow_initial_overrides(
 
 
 
+def _captured_visible_wallpaper(payload_home: Path) -> str | None:
+    """Return the portable wallpaper path from the already-rewritten profile.
+
+    The returned value is a ``{{HOME}}/...`` path, not a file URL.  Reading it
+    from the copied config means this reflects all relocation and live-session
+    wallpaper repairs that happened during capture.
+    """
+    config = payload_home / ".config/plasma-org.kde.plasma.desktop-appletsrc"
+    if not config.is_file():
+        return None
+    try:
+        lines = config.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() != "Image":
+            continue
+        value = unquote(value.strip())
+        if value.startswith("file://"):
+            value = value[len("file://") :]
+        if not value.startswith("{{HOME}}/"):
+            continue
+        relative = value[len("{{HOME}}/") :]
+        candidate = payload_home / relative
+        if candidate.is_file():
+            return "{{HOME}}/" + relative
+    return None
+
+
+
 def _copy_external_tree(
     src: Path,
     destination_root: Path,
@@ -1781,6 +1814,7 @@ def capture_profile(
 
     system_visual = _capture_system_visual_fidelity(output)
     source_info = _capture_source_branding(output, collect_system_info())
+    visible_wallpaper = _captured_visible_wallpaper(payload_home)
 
     manifest = Manifest(
         schema_version=1,
@@ -1795,7 +1829,8 @@ def capture_profile(
             "application_install_mode": "online-selective",
             "profile_version": __version__,
             "asset_mode": asset_mode,
-            "fidelity_schema": 8,
+            "fidelity_schema": 9,
+            "visible_wallpaper": visible_wallpaper,
             "system_visual": system_visual,
             "desktop_surface": {
                 "directory": _portable_home_path(desktop_surface_dir, home),

@@ -41,22 +41,30 @@ def _run(tmp_path: Path, schema: str | None) -> subprocess.CompletedProcess[str]
     )
 
 
-def test_v0333_safe_build_accepts_current_schema_8(tmp_path: Path):
-    result = _run(tmp_path, "8")
-    assert result.returncode == 0, result.stderr
-    assert (tmp_path / "build/build-was-called").exists()
-
-
-def test_v0333_safe_build_accepts_future_schema(tmp_path: Path):
+def test_v040_safe_build_accepts_current_schema_9(tmp_path: Path):
     result = _run(tmp_path, "9")
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "build/build-was-called").exists()
 
 
+def test_v040_safe_build_accepts_future_schema(tmp_path: Path):
+    result = _run(tmp_path, "10")
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "build/build-was-called").exists()
+
+
+
+def test_v040_safe_build_rejects_schema_8(tmp_path: Path):
+    result = _run(tmp_path, "8")
+    assert result.returncode == 6
+    assert "first-login convergence fidelity capture v9" in result.stderr
+    assert "Detected fidelity_schema: 8" in result.stderr
+    assert not (tmp_path / "build/build-was-called").exists()
+
 def test_v0333_safe_build_rejects_schema_7(tmp_path: Path):
     result = _run(tmp_path, "7")
     assert result.returncode == 6
-    assert "system-visible fidelity capture v8" in result.stderr
+    assert "first-login convergence fidelity capture v9" in result.stderr
     assert "Detected fidelity_schema: 7" in result.stderr
     assert not (tmp_path / "build/build-was-called").exists()
 

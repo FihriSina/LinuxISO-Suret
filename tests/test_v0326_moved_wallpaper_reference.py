@@ -47,7 +47,7 @@ def test_v0326_repairs_wallpaper_moved_into_subdirectory(tmp_path: Path, monkeyp
     profile = tmp_path / "profile"
     manifest = capture_profile(profile, home)
 
-    assert manifest.restore["fidelity_schema"] == 8
+    assert manifest.restore["fidelity_schema"] == 9
     restored = (
         profile / "payload/home/.config/plasma-org.kde.plasma.desktop-appletsrc"
     ).read_text(encoding="utf-8")

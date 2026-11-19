@@ -63,7 +63,7 @@ def test_v0325_capture_bundles_panel_launcher_and_wallpaper_directory(tmp_path: 
     profile = tmp_path / "profile"
     manifest = capture_profile(profile, home)
 
-    assert manifest.restore["fidelity_schema"] == 8
+    assert manifest.restore["fidelity_schema"] == 9
     assert (profile / "payload/home/.local/share/applications/code.desktop").is_file()
     assert (
         profile / "payload/home/.local/share/icons/hicolor/scalable/apps/visual-studio-code.svg"
@@ -113,6 +113,6 @@ def test_v0325_target_profile_job_is_mandatory_and_qemu_can_boot_installed_disk(
     assert 'item == "users" or item.startswith("users@")' in patcher
     assert "target-profile job is missing" in patcher
     assert "restored wallpaper asset is missing" in target
-    assert 'MODE=${2:-${LINUX_ISO_QEMU_MODE:-live}}' in qemu
+    assert 'MODE=${2:-${LINUX_ISO_QEMU_MODE:-install}}' in qemu
     assert 'MODE" = installed' in qemu or '"$MODE" = installed' in qemu
     assert "-boot c" in qemu

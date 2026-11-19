@@ -218,12 +218,16 @@ def _target_call(command):
 def _install_apt(items):
     if not items:
         return []
-    names = [item["name"] for item in items]
-    if _target_call(["apt-get", "update"]) and _target_call(
-        ["apt-get", "install", "-y", *names]
-    ):
-        return []
-    return items
+    # One unavailable source-distro package must not prevent every other
+    # selected APT application from installing. Refresh once, then isolate
+    # failures per package and defer only those items to first boot.
+    if not _target_call(["apt-get", "update"]):
+        return items
+    pending = []
+    for item in items:
+        if not _target_call(["apt-get", "install", "-y", item["name"]]):
+            pending.append(item)
+    return pending
 
 
 def _install_flatpak(items):
@@ -309,10 +313,13 @@ def install_apt(items):
         return []
     if shutil.which("apt-get") is None:
         return items
-    names = [item["name"] for item in items]
-    if run(["apt-get", "update"]) and run(["apt-get", "install", "-y", *names]):
-        return []
-    return items
+    if not run(["apt-get", "update"]):
+        return items
+    pending = []
+    for item in items:
+        if not run(["apt-get", "install", "-y", item["name"]]):
+            pending.append(item)
+    return pending
 
 
 def install_flatpak(items):

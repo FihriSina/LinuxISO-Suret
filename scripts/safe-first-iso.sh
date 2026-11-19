@@ -19,8 +19,8 @@ trap cleanup EXIT INT TERM
 
 if [ -f "$PROFILE/manifest.yaml" ]; then
   FIDELITY_SCHEMA=$(awk '/^[[:space:]]*fidelity_schema:[[:space:]]*/ { print $2; exit }' "$PROFILE/manifest.yaml")
-  if ! [[ "$FIDELITY_SCHEMA" =~ ^[0-9]+$ ]] || [ "$FIDELITY_SCHEMA" -lt 8 ]; then
-    echo "Profile predates system-visible fidelity capture v8: $PROFILE" >&2
+  if ! [[ "$FIDELITY_SCHEMA" =~ ^[0-9]+$ ]] || [ "$FIDELITY_SCHEMA" -lt 9 ]; then
+    echo "Profile predates first-login convergence fidelity capture v9: $PROFILE" >&2
     echo "Detected fidelity_schema: ${FIDELITY_SCHEMA:-missing}" >&2
     echo "Re-capture it with: uv run linux-iso scan -o $PROFILE" >&2
     exit 6
@@ -57,4 +57,4 @@ export LINUX_ISO_MONITOR_RESOURCES=${LINUX_ISO_MONITOR_RESOURCES:-1}
 echo
 printf 'Build finished. QEMU was not started automatically.\n'
 RESULT_DIR=${LINUX_ISO_RESULT_DIR:-${BUILD_DIR}-result}
-printf 'If an ISO was created, start it manually with: %s/test-qemu.sh %s\n' "$BUILD_DIR" "$RESULT_DIR"
+printf 'Final installer test: %s/test-qemu.sh %s install\n' "$BUILD_DIR" "$RESULT_DIR"

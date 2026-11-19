@@ -41,7 +41,7 @@ if [ "$HOST_READY" -eq 1 ]; then
     exit 6
   fi
   printf '\nISO ready: %s\n' "$ISO"
-  printf 'Boot command: %s/test-qemu.sh %s\n' "$BUILD_DIR" "$RESULT_DIR"
+  printf 'Install-test command: %s/test-qemu.sh %s install\n' "$BUILD_DIR" "$RESULT_DIR"
 else
   printf '\n== 6/6 ISO build deferred ==\n'
   echo "Build project is ready at: $BUILD_DIR"
