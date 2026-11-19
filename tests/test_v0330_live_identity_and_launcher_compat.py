@@ -93,3 +93,16 @@ def test_v0330_pardus_mycomputer_launcher_gets_portable_kde_exec(tmp_path: Path)
     assert "Exec=dolphin computer:/" in text
     assert "pardus-mycomputer" not in text
     assert captured.sha256
+
+
+def test_v0331_installer_launcher_uses_active_xdg_desktop_directory(tmp_path: Path):
+    profile = _profile(tmp_path)
+    build = tmp_path / "build"
+    generate_kiwi_project(profile, build)
+
+    config = (build / "config.sh").read_text(encoding="utf-8")
+    assert "/home/live/.config/user-dirs.dirs" in config
+    assert "XDG_DESKTOP_DIR" in config
+    assert "desktop_dir=/home/live/Desktop" in config
+    assert 'desktop_dir=$XDG_DESKTOP_DIR' in config
+    assert "Pardus'u Kur.desktop" in config

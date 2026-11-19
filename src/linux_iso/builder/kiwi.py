@@ -98,6 +98,7 @@ UBUNTU_2604_KDE = BaseRecipe(
         "kwin-x11",
         "xorg",
         "konsole",
+        "kio-extras",
         "python3",
         "sudo",
         "network-manager",
@@ -670,6 +671,8 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 PAYLOAD = Path("/usr/share/linux-iso/profile/payload/home")
+SYSTEM_PAYLOAD = Path("/usr/share/linux-iso/profile/payload/system")
+SYSTEM_VISUAL = Path("/usr/share/linux-iso/profile/system-visual.json")
 PERSONALIZATION_PATHS = (
     "Desktop",
     ".config/kdeglobals",
@@ -787,6 +790,80 @@ def validate_wallpaper(home: Path) -> int:
     return checked
 
 
+def apply_system_visual(root: Path, home: Path, username: str, uid: int, gid: int) -> None:
+    # Shell fragments captured from the source may source ~/.local/bin/env.
+    # Ensure the portable target always has that harmless compatibility file.
+    env_file = home / ".local/bin/env"
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    if not env_file.exists():
+        env_file.write_text("# Linux ISO - Suret portable environment shim\n", encoding="utf-8")
+    os.chown(env_file.parent.parent, uid, gid)
+    os.chown(env_file.parent, uid, gid)
+    os.chown(env_file, uid, gid)
+
+    # Make the copied profile avatar visible to SDDM/AccountsService as well.
+    face = home / ".face"
+    if face.is_file():
+        icons = root / "var/lib/AccountsService/icons"
+        users = root / "var/lib/AccountsService/users"
+        icons.mkdir(parents=True, exist_ok=True)
+        users.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(face, icons / username)
+        (users / username).write_text(
+            "[User]\nIcon=/var/lib/AccountsService/icons/" + username + "\n",
+            encoding="utf-8",
+        )
+
+    if not SYSTEM_VISUAL.is_file():
+        return
+    try:
+        import json
+        visual = json.loads(SYSTEM_VISUAL.read_text(encoding="utf-8"))
+    except Exception:
+        return
+
+    grub = visual.get("grub") or {}
+    grub_src = SYSTEM_PAYLOAD / "grub/theme"
+    if grub.get("theme_captured") and grub_src.is_dir():
+        grub_dst = root / "usr/share/grub/themes/suret-source"
+        if grub_dst.exists():
+            shutil.rmtree(grub_dst, ignore_errors=True)
+        grub_dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(grub_src, grub_dst)
+        theme_file = str(grub.get("theme_file") or "theme.txt")
+        settings = dict(grub.get("settings") or {})
+        lines = [f'GRUB_THEME="/usr/share/grub/themes/suret-source/{theme_file}"']
+        bg = next((p for p in (SYSTEM_PAYLOAD / "grub").glob("background.*") if p.is_file()), None)
+        if bg:
+            target_bg = root / "usr/share/grub/themes/suret-source" / bg.name
+            shutil.copy2(bg, target_bg)
+            lines.append(f'GRUB_BACKGROUND="/usr/share/grub/themes/suret-source/{bg.name}"')
+        for key in ("GRUB_GFXMODE", "GRUB_GFXPAYLOAD_LINUX", "GRUB_TIMEOUT_STYLE", "GRUB_TIMEOUT"):
+            value = settings.get(key)
+            if value:
+                lines.append(f'{key}="{value}"')
+        cfg = root / "etc/default/grub.d/98-linux-iso-source-fidelity.cfg"
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    sddm = visual.get("sddm") or {}
+    sddm_src = SYSTEM_PAYLOAD / "sddm/theme"
+    if sddm.get("theme_captured") and sddm_src.is_dir():
+        sddm_dst = root / "usr/share/sddm/themes/suret-source"
+        if sddm_dst.exists():
+            shutil.rmtree(sddm_dst, ignore_errors=True)
+        sddm_dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(sddm_src, sddm_dst)
+        settings = dict(sddm.get("settings") or {})
+        conf = root / "etc/sddm.conf.d/98-linux-iso-source-fidelity.conf"
+        conf.parent.mkdir(parents=True, exist_ok=True)
+        lines = ["[Theme]", "Current=suret-source"]
+        for key in ("CursorTheme", "Font"):
+            if settings.get(key):
+                lines.append(f"{key}={settings[key]}")
+        conf.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("usage: apply-target-profile ROOT")
@@ -822,6 +899,7 @@ def main() -> int:
         copied += 1
 
     os.chown(home, uid, gid)
+    apply_system_visual(root, home, username, uid, gid)
     wallpaper_checks = validate_wallpaper(home)
     state = root / "var/lib/linux-iso"
     state.mkdir(parents=True, exist_ok=True)
@@ -1102,6 +1180,10 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe, manifest: dict[s
         "rm -f /usr/lib/linux-iso/update-target-initramfs /usr/lib/linux-iso/finalize-target\n"
         "rm -f /usr/lib/linux-iso/apply-target-profile.py /usr/lib/linux-iso/apply-live-profile.py\n"
         "rm -f /usr/lib/linux-iso/hide-foreign-installers\n"
+        "if [ -r /etc/default/grub.d/98-linux-iso-source-fidelity.cfg ]; then\n"
+        "  if command -v update-grub >/dev/null 2>&1; then update-grub || true;\n"
+        "  elif command -v grub-mkconfig >/dev/null 2>&1; then grub-mkconfig -o /boot/grub/grub.cfg || true; fi\n"
+        "fi\n"
         "exit 0\n",
         encoding="utf-8",
     )
@@ -1242,8 +1324,18 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe, manifest: dict[s
         "Categories=System;\n"
         "EOF\n"
         "chmod 0755 /usr/local/share/applications/linux-iso-installer.desktop\n"
-        "cp /usr/local/share/applications/linux-iso-installer.desktop /home/live/Desktop/linux-iso-installer.desktop\n"
-        "chmod 0755 /home/live/Desktop/linux-iso-installer.desktop\n"
+        "desktop_dir=/home/live/Desktop\n"
+        "if [ -r /home/live/.config/user-dirs.dirs ]; then\n"
+        "  saved_home=$HOME\n"
+        "  HOME=/home/live\n"
+        "  . /home/live/.config/user-dirs.dirs\n"
+        "  HOME=$saved_home\n"
+        "  if [ -n \"${XDG_DESKTOP_DIR:-}\" ] && [[ \"$XDG_DESKTOP_DIR\" == /home/live/* ]]; then desktop_dir=$XDG_DESKTOP_DIR; fi\n"
+        "fi\n"
+        "install -d -o live -g users -m 0755 \"$desktop_dir\"\n"
+        f"cp /usr/local/share/applications/linux-iso-installer.desktop \"$desktop_dir/{installer_name_tr}.desktop\"\n"
+        f"chmod 0755 \"$desktop_dir/{installer_name_tr}.desktop\"\n"
+        f"chown live:users \"$desktop_dir/{installer_name_tr}.desktop\"\n"
         "chown -R live:users /home/live\n"
         "command -v baseSetRunlevel >/dev/null 2>&1 && baseSetRunlevel 5 || true\n"
         "command -v baseService >/dev/null 2>&1 && baseService sddm on || true\n"

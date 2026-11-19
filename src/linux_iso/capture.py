@@ -56,6 +56,127 @@ DESKTOP_EXEC_COMPAT_REPLACEMENTS = {
 }
 
 
+
+def _read_grub_defaults() -> dict[str, str]:
+    values: dict[str, str] = {}
+    files = [Path("/etc/default/grub")]
+    confd = Path("/etc/default/grub.d")
+    if confd.is_dir():
+        files.extend(sorted(confd.glob("*.cfg")))
+    wanted = {
+        "GRUB_THEME", "GRUB_BACKGROUND", "GRUB_GFXMODE", "GRUB_GFXPAYLOAD_LINUX",
+        "GRUB_TIMEOUT_STYLE", "GRUB_TIMEOUT", "GRUB_DISTRIBUTOR",
+    }
+    for path in files:
+        if not path.is_file():
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for raw in lines:
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if key not in wanted:
+                continue
+            value = value.strip().strip('"').strip("'")
+            if value:
+                values[key] = value
+    return values
+
+
+def _read_sddm_theme() -> dict[str, str]:
+    values: dict[str, str] = {}
+    files = [Path("/etc/sddm.conf")]
+    confd = Path("/etc/sddm.conf.d")
+    if confd.is_dir():
+        files.extend(sorted(confd.glob("*.conf")))
+    section = ""
+    for path in files:
+        if not path.is_file():
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        for raw in lines:
+            line = raw.strip()
+            if not line or line.startswith(("#", ";")):
+                continue
+            if line.startswith("[") and line.endswith("]"):
+                section = line[1:-1].strip().lower()
+                continue
+            if section != "theme" or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if key.strip() in {"Current", "CursorTheme", "Font", "ThemeDir"}:
+                values[key.strip()] = value.strip()
+    return values
+
+
+def _copy_visual_tree(src: Path, dst: Path) -> bool:
+    try:
+        if not src.exists() or path_is_sensitive(src):
+            return False
+        if dst.exists():
+            shutil.rmtree(dst) if dst.is_dir() else dst.unlink()
+        if src.is_dir():
+            shutil.copytree(src, dst, symlinks=False)
+        elif src.is_file():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+        else:
+            return False
+        return True
+    except OSError:
+        return False
+
+
+def _capture_system_visual_fidelity(output: Path) -> dict[str, object]:
+    """Capture non-personal, user-visible boot/login appearance.
+
+    This intentionally excludes machine IDs, accounts and host-specific boot
+    entries. Only theme assets and presentation-related settings are retained.
+    """
+    payload = output / "payload/system"
+    visual: dict[str, object] = {"schema": 1, "grub": {}, "sddm": {}}
+
+    grub = _read_grub_defaults()
+    grub_meta: dict[str, object] = {"settings": grub}
+    theme_raw = grub.get("GRUB_THEME", "")
+    if theme_raw:
+        theme = Path(theme_raw)
+        theme_root = theme.parent if theme.is_file() else theme
+        if _copy_visual_tree(theme_root, payload / "grub/theme"):
+            grub_meta["theme_captured"] = True
+            grub_meta["theme_file"] = theme.name if theme.is_file() else "theme.txt"
+    bg_raw = grub.get("GRUB_BACKGROUND", "")
+    if bg_raw:
+        bg = Path(bg_raw)
+        if bg.is_file() and _copy_visual_tree(bg, payload / "grub" / ("background" + bg.suffix.lower())):
+            grub_meta["background_captured"] = True
+            grub_meta["background_suffix"] = bg.suffix.lower()
+    visual["grub"] = grub_meta
+
+    sddm = _read_sddm_theme()
+    sddm_meta: dict[str, object] = {"settings": sddm}
+    current = sddm.get("Current", "")
+    if current:
+        candidates = [Path("/usr/local/share/sddm/themes") / current, Path("/usr/share/sddm/themes") / current]
+        theme_dir = next((x for x in candidates if x.is_dir()), None)
+        if theme_dir and _copy_visual_tree(theme_dir, payload / "sddm/theme"):
+            sddm_meta["theme_captured"] = True
+            sddm_meta["source_theme"] = current
+    visual["sddm"] = sddm_meta
+
+    output.mkdir(parents=True, exist_ok=True)
+    (output / "system-visual.json").write_text(json.dumps(visual, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return visual
+
+
 class CaptureError(RuntimeError):
     pass
 
@@ -1658,6 +1779,7 @@ def capture_profile(
         ],
     }
 
+    system_visual = _capture_system_visual_fidelity(output)
     source_info = _capture_source_branding(output, collect_system_info())
 
     manifest = Manifest(
@@ -1673,7 +1795,8 @@ def capture_profile(
             "application_install_mode": "online-selective",
             "profile_version": __version__,
             "asset_mode": asset_mode,
-            "fidelity_schema": 7,
+            "fidelity_schema": 8,
+            "system_visual": system_visual,
             "desktop_surface": {
                 "directory": _portable_home_path(desktop_surface_dir, home),
                 "launchers": sorted(desktop_surface_items),

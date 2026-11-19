@@ -4,9 +4,17 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.3.30
+## Current milestone: v0.3.32
 
-### v0.3.30: source-native live identity + installer decontamination
+### v0.3.32: system-visible fidelity (GRUB, SDDM, avatar, KIO compatibility)
+
+- Captures and reapplies the active source GRUB theme/background and presentation settings without copying host-specific boot entries.
+- Captures and reapplies the active SDDM theme; the captured user avatar is also registered with AccountsService.
+- Adds `kio-extras` so the portable `Bilgisayar` launcher can open KDE's `computer:/` location.
+- Creates the target user's portable `~/.local/bin/env` shim so captured shell startup files do not fail on a fresh account.
+- Fidelity schema is now v8; re-scan the source desktop before building.
+
+### v0.3.31: XDG-aware desktop installer launcher
 
 - Masks Kubuntu/OEM installer desktop entries so the live Kickoff/KRunner shows only the Suret source-branded installer.
 - Uses the captured source distribution name for the live user's visible identity (for example `Pardus Live`).

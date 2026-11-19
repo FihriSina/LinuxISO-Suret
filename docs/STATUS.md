@@ -1,10 +1,14 @@
-## v0.3.30 implemented
+## v0.3.32 implemented
 
-- Source distribution identity now reaches the live user's visible name (`Pardus Live` for the current source profile).
-- Kubuntu and OEM installer desktop entries are masked through higher-priority XDG application overrides before the live Plasma session starts.
-- The live environment exposes one source-branded Suret installer desktop/application entry.
-- The installed target removes the Suret installer entry while retaining the foreign-installer masks.
-- QEMU test windows clearly distinguish LIVE ISO from INSTALLED SYSTEM mode.
-- Known source-only desktop convenience launchers can be translated to portable KDE equivalents; `pardus-mycomputer` now opens `dolphin computer:/`.
-- v0.3.29 fidelity fixes remain in place.
-- Regression suite: 116 tests.
+- System-visible fidelity now includes source GRUB theme/background settings and SDDM theme assets.
+- Target avatars are registered with AccountsService.
+- `kio-extras` is included for KDE `computer:/` support.
+- Target `~/.local/bin/env` is guaranteed to exist.
+- Fidelity schema v8.
+- 119 tests pass.
+
+## v0.3.31 implemented
+
+- Installer shortcut is placed on the active XDG desktop directory (Desktop/Masaustu/etc.).
+- Source-native launcher naming and v0.3.30 Kubuntu installer masking remain intact.
+- Installed-system boot mode remains unchanged.

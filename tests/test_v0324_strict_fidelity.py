@@ -91,7 +91,7 @@ def test_v0324_capture_bundles_system_theme_and_external_wallpaper(tmp_path: Pat
     )
     assert len(captured_external) == 1
     assert captured_external[0].read_bytes() == wallpaper.read_bytes()
-    assert manifest.restore["fidelity_schema"] == 7
+    assert manifest.restore["fidelity_schema"] == 8
 
 
 def _profile(tmp_path: Path) -> Path:

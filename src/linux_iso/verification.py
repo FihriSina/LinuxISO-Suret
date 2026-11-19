@@ -84,9 +84,9 @@ def verify_profile(profile: Path) -> VerificationResult:
         fidelity_schema = int(restore.get("fidelity_schema", 0) or 0)
     except (TypeError, ValueError):
         fidelity_schema = 0
-    if fidelity_schema < 7:
+    if fidelity_schema < 8:
         warnings.append(
-            "Profile predates desktop-surface fidelity capture v7; re-run 'linux-iso scan' before the next ISO build "
+            "Profile predates desktop-surface fidelity capture v8; re-run 'linux-iso scan' before the next ISO build "
             "to preserve source distro branding, Kickoff favorites/order, avatar, visible desktop launchers, and wallpaper fidelity."
         )
     stats: dict[str, int | str] = {
