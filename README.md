@@ -4,25 +4,21 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.4.1
+## Current milestone: v0.4.2
 
-### v0.4.1: batch-debugging and primary-screen fidelity convergence
+### v0.4.2: batch runtime compatibility and source-state repair
 
-- Treats the running Plasma primary screen (screen 0) as authoritative for the visible wallpaper instead of taking the first persisted `Image=` entry from any containment. This avoids stale/dormant containments selecting the wrong wallpaper.
-- First-login convergence now reapplies icon theme, cursor theme, color scheme and Plasma desktop theme in addition to the wallpaper, without invoking a global look-and-feel reset that could destroy panel/layout fidelity.
-- First-login completion markers are keyed to the captured visible-state hash, so a changed profile can self-heal even when the fidelity schema number stays the same.
-- Writes `~/.local/state/linux-iso/first-login-report.json` with requested/active wallpaper and appearance-application results.
-- Installs `suret-diagnose`, a one-command redacted diagnostic collector for wallpaper/containment state, launcher Exec health, KIO `computer:/`, required commands/packages, GRUB/SDDM fidelity, systemd failures and relevant desktop/installer journal events.
-- Batch diagnostics intentionally redact the user home path, username and hostname.
-- Project regression suite: 130 tests.
+- Treats the wallpaper shown on the current Plasma activity and screen 0 as authoritative; dormant activities no longer win capture ordering.
+- Uses a safe Breeze SDDM runtime shell with the captured source wallpaper/avatar, while archiving the source SDDM theme instead of activating potentially incompatible source QML on the Ubuntu/Plasma target.
+- Rewrites source-only Pardus launchers to working target equivalents (Dolphin filesystem view, Info Center, Discover, PowerDevil settings).
+- Rewrites VS Code, Signal and Steam launchers/providers to portable Flathub identities when their source distro packages are not portable to the target.
+- Normalizes ChatGPT and WhatsApp Web launchers to `xdg-open` URLs, avoiding browser-profile-specific source commands.
+- Resolves pinned/favorite launchers from Flatpak and Snap export directories, so applications such as Android Studio remain visible in restored Kickoff favorites.
+- Adds the target runtime dependencies needed by those portable launcher mappings.
+- Fidelity schema v10 forces a fresh source scan so stale launcher and wallpaper state cannot leak from earlier profiles.
+- Project regression suite: 138 tests.
 
-If the installed system still differs from the source desktop after the final acceptance boot, run this once inside the installed system and attach the generated archive instead of collecting errors one by one:
-
-```bash
-suret-diagnose
-```
-
-The command prints the path of a `~/suret-diagnostics-*.tar.gz` archive.
+If any runtime issue remains after the installed-system boot, run `suret-diagnose` once and send the generated archive; it is designed for batch diagnosis rather than one-error-per-build debugging.
 
 ### v0.4.0: final acceptance / one-window install convergence
 
@@ -30,7 +26,7 @@ The command prints the path of a `~/suret-diagnostics-*.tar.gz` archive.
 - QEMU now defaults to `install` mode, creates a clean test disk, boots the ISO only once, and after Calamares Restart automatically continues from the installed disk in the same QEMU process.
 - Persists a per-test OVMF VARS image so UEFI boot entries survive installer reboot and later installed-system replay.
 - Adds a first-login KDE convergence hook that refreshes application/icon caches and reapplies the captured visible wallpaper after Plasma/DBus is live, preventing target-distro wallpaper fallback.
-- Records the final portable visible-wallpaper path in fidelity schema v9 and verifies the asset before ISO staging.
+- Records the final portable visible-wallpaper path in fidelity schema v10 and verifies the asset before ISO staging.
 - Optional APT applications install independently so one unavailable source-distro package does not block all other selected packages.
 - Retains v0.3.20-v0.3.33 Calamares, initramfs, automirror, cleanup, desktop-surface, source branding, GRUB, SDDM, avatar, KIO, launcher and schema-gate fixes.
 - Project regression suite: 127 tests.

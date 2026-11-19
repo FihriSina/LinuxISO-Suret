@@ -10,12 +10,15 @@ RESULT_DIR=${3:-$HOME/linux-iso-build-result}
 
 command -v uv >/dev/null 2>&1 || { echo 'uv is required' >&2; exit 2; }
 
-printf '== Linux ISO - Suret v0.4.1 batch final acceptance ==\n'
+printf '== Linux ISO - Suret v0.4.2 batch final acceptance ==\n'
 printf 'Profile: %s\nBuild:   %s\nResult:  %s\n\n' "$PROFILE" "$BUILD_DIR" "$RESULT_DIR"
 
 rm -rf "$PROFILE" "$BUILD_DIR" "$RESULT_DIR"
 
 uv sync
+printf '\n== Project regression suite ==\n'
+uv run pytest -q
+
 uv run linux-iso scan -o "$PROFILE"
 uv run linux-iso verify "$PROFILE"
 uv run linux-iso audit "$PROFILE"

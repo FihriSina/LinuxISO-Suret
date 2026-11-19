@@ -53,7 +53,7 @@ def test_v040_capture_records_portable_visible_wallpaper(tmp_path: Path, monkeyp
     profile = tmp_path / "profile"
     manifest = capture_profile(profile, home)
 
-    assert manifest.restore["fidelity_schema"] == 9
+    assert manifest.restore["fidelity_schema"] == 10
     assert manifest.restore["visible_wallpaper"] == "{{HOME}}/Resimler/ArkaPlanlar/dreamlike-whale.jpg"
     assert verify_profile(profile).ok
 

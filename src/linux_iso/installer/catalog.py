@@ -38,6 +38,7 @@ APPLICATION_PRESENTATION: dict[str, tuple[str, str]] = {
     "git": ("Git", "Distributed version control system."),
     "cmake": ("CMake", "Cross-platform build system generator."),
     "code": ("Visual Studio Code", "Code editor with extension support."),
+    "com.visualstudio.code": ("Visual Studio Code", "Code editor with extension support."),
     "podman": ("Podman", "Daemonless container engine."),
     "com.google.AndroidStudio": ("Android Studio", "Android development environment."),
     "fastfetch": ("Fastfetch", "Fast system information utility."),
@@ -58,6 +59,45 @@ def _presentation(name: str, reason: str | None) -> tuple[str, str]:
     description = (reason or "Optional application. Selected by default; uncheck to skip.").strip()
     return display, description
 
+
+
+# Native packages which are commonly supplied by source-distro/vendor
+# repositories but are not guaranteed to exist in the Ubuntu target. Prefer a
+# stable Flathub identity so the default-selected application actually launches
+# after installation.
+PORTABLE_PROVIDER_FALLBACKS: dict[tuple[str, str], dict[str, str]] = {
+    ("apt", "code"): {
+        "provider": "flatpak",
+        "name": "com.visualstudio.code",
+        "source": "flathub",
+        "source_url": "https://flathub.org/repo/flathub.flatpakrepo",
+    },
+    ("apt", "signal-desktop"): {
+        "provider": "flatpak",
+        "name": "org.signal.Signal",
+        "source": "flathub",
+        "source_url": "https://flathub.org/repo/flathub.flatpakrepo",
+    },
+    ("apt", "steam"): {
+        "provider": "flatpak",
+        "name": "com.valvesoftware.Steam",
+        "source": "flathub",
+        "source_url": "https://flathub.org/repo/flathub.flatpakrepo",
+    },
+}
+
+
+def _portable_provider(package: dict[str, Any]) -> dict[str, Any]:
+    item = dict(package)
+    key = (str(item.get("provider") or "unknown"), str(item.get("name") or ""))
+    fallback = PORTABLE_PROVIDER_FALLBACKS.get(key)
+    if fallback:
+        item.update(fallback)
+        item["visibility_reason"] = (
+            str(package.get("visibility_reason") or "")
+            + " Portable target uses a Flathub fallback."
+        ).strip()
+    return item
 
 CATEGORY_LABELS = {
     "internet": "Internet",
@@ -93,7 +133,9 @@ def build_catalog(profile: Path) -> dict[str, Any]:
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     required: list[dict[str, Any]] = []
 
-    for package in manifest.get("packages", []):
+    seen_optional: set[tuple[str, str]] = set()
+    for raw_package in manifest.get("packages", []):
+        package = _portable_provider(raw_package)
         display_name, description = _presentation(package["name"], package.get("reason"))
         item = {
             "id": package_item_id(package.get("provider", "unknown"), package["name"]),
@@ -113,7 +155,10 @@ def build_catalog(profile: Path) -> dict[str, Any]:
         if item["required_for_appearance"]:
             required.append(item)
         elif item["installer_visible"]:
-            groups[item["category"]].append(item)
+            identity = (item["provider"], item["name"])
+            if identity not in seen_optional:
+                groups[item["category"]].append(item)
+                seen_optional.add(identity)
 
     categories: list[dict[str, Any]] = []
     known = list(CATEGORY_ORDER)

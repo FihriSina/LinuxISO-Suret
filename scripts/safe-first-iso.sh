@@ -19,8 +19,8 @@ trap cleanup EXIT INT TERM
 
 if [ -f "$PROFILE/manifest.yaml" ]; then
   FIDELITY_SCHEMA=$(awk '/^[[:space:]]*fidelity_schema:[[:space:]]*/ { print $2; exit }' "$PROFILE/manifest.yaml")
-  if ! [[ "$FIDELITY_SCHEMA" =~ ^[0-9]+$ ]] || [ "$FIDELITY_SCHEMA" -lt 9 ]; then
-    echo "Profile predates first-login convergence fidelity capture v9: $PROFILE" >&2
+  if ! [[ "$FIDELITY_SCHEMA" =~ ^[0-9]+$ ]] || [ "$FIDELITY_SCHEMA" -lt 10 ]; then
+    echo "Profile predates first-login convergence fidelity capture v10: $PROFILE" >&2
     echo "Detected fidelity_schema: ${FIDELITY_SCHEMA:-missing}" >&2
     echo "Re-capture it with: uv run linux-iso scan -o $PROFILE" >&2
     exit 6

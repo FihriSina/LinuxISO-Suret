@@ -52,7 +52,24 @@ WALLPAPER_IMAGE_EXTENSIONS = {
 # the user-visible launcher while translating the action to an equivalent KDE
 # operation available in the Ubuntu/KDE target.
 DESKTOP_EXEC_COMPAT_REPLACEMENTS = {
-    "pardus-mycomputer": "dolphin computer:/",
+    # Plasma 6 no longer exposes the historical computer:/ KIO protocol on
+    # modern KDE installs. Keep the familiar Bilgisayar launcher but open a
+    # portable Dolphin filesystem view instead.
+    "pardus-mycomputer": "dolphin /",
+    # Pardus-specific control applications have no guaranteed Ubuntu package.
+    # Preserve their labels/icons while redirecting to KDE-native equivalents.
+    "pardus-about": "kinfocenter",
+    "pardus-update": "plasma-discover --mode update",
+    "pardus-software": "plasma-discover",
+    "pardus-software-center": "plasma-discover",
+    "pardus-power-manager": "systemsettings kcm_powerdevilprofilesconfig",
+    "pardus-java-installer": "plasma-discover",
+    # Portable app fallbacks used by the installer catalog. Rewriting the
+    # source launcher at capture time keeps pinned/favorite entries functional.
+    "code": "flatpak run com.visualstudio.code",
+    "/usr/share/code/code": "flatpak run com.visualstudio.code",
+    "signal-desktop": "flatpak run org.signal.Signal",
+    "steam": "flatpak run com.valvesoftware.Steam",
 }
 
 
@@ -288,12 +305,22 @@ def _copy_file(src: Path, dst: Path, home: Path, kind: str) -> CapturedFile:
 
 
 def _rewrite_desktop_exec_compat(text: str) -> str:
-    """Translate known source-distro-only desktop commands to portable KDE.
+    """Translate source-only launchers to commands available on the target.
 
-    The visible launcher, label and icon remain unchanged.  Only an Exec line
-    whose executable is known to be unavailable on the target is rewritten.
-    Unknown commands are deliberately left untouched rather than guessed.
+    Labels and icons are preserved. Known web-app launchers are normalized by
+    their visible name so browser-profile-specific commands do not break after
+    migration. Unknown commands are deliberately left untouched.
     """
+    primary_name = ""
+    for raw in text.splitlines():
+        if raw.startswith("Name="):
+            primary_name = raw.split("=", 1)[1].strip().casefold()
+            break
+    web_replacement = {
+        "whatsapp web": "xdg-open https://web.whatsapp.com/",
+        "chatgpt": "xdg-open https://chatgpt.com/",
+    }.get(primary_name)
+
     lines: list[str] = []
     for line in text.splitlines(keepends=True):
         stripped = line.rstrip("\r\n")
@@ -303,7 +330,11 @@ def _rewrite_desktop_exec_compat(text: str) -> str:
             continue
         command = stripped.split("=", 1)[1].strip()
         executable = command.split(None, 1)[0] if command else ""
-        replacement = DESKTOP_EXEC_COMPAT_REPLACEMENTS.get(executable)
+        replacement = web_replacement
+        if replacement is None:
+            replacement = DESKTOP_EXEC_COMPAT_REPLACEMENTS.get(executable)
+        if replacement is None and executable:
+            replacement = DESKTOP_EXEC_COMPAT_REPLACEMENTS.get(Path(executable).name)
         if replacement is None:
             lines.append(line)
             continue
@@ -471,11 +502,12 @@ def _runtime_plasma_wallpaper_state(home: Path) -> list[dict[str, object]]:
     if not qdbus:
         return []
     script = (
-        'var out=[]; var ds=desktops(); '
+        'var out=[]; var aid=currentActivity(); var ds=desktopsForActivity(aid); '
+        'if (!ds || !ds.length) ds=desktops(); '
         'for (var i=0; i<ds.length; ++i) {'
         ' var d=ds[i]; var p=d.wallpaperPlugin;'
         ' d.currentConfigGroup=["Wallpaper",p,"General"];'
-        ' out.push({id:d.id,screen:(typeof d.screen === \"undefined\" ? -1 : d.screen),plugin:p,image:d.readConfig("Image",""),slidePaths:d.readConfig("SlidePaths","")});'
+        ' out.push({id:d.id,screen:(typeof d.screen === \"undefined\" ? -1 : d.screen),plugin:p,image:d.readConfig("Image",""),slidePaths:d.readConfig("SlidePaths",""),activity:aid});'
         '} JSON.stringify(out);'
     )
     try:
@@ -1241,6 +1273,10 @@ def _named_launcher_icon_files(home: Path, icon_name: str) -> list[tuple[Path, P
     hicolor_roots = [
         home / ".local/share/icons/hicolor",
         home / ".icons/hicolor",
+        # Flatpak exports icons alongside exported .desktop files; capture them
+        # so restored/pinned applications do not render generic placeholders.
+        home / ".local/share/flatpak/exports/share/icons/hicolor",
+        Path("/var/lib/flatpak/exports/share/icons/hicolor"),
         Path("/usr/local/share/icons/hicolor"),
         Path("/usr/share/icons/hicolor"),
     ]
@@ -1264,7 +1300,11 @@ def _named_launcher_icon_files(home: Path, icon_name: str) -> list[tuple[Path, P
                 continue
             result.append((candidate, Path(".local/share/icons/hicolor") / rel))
 
-    for root in (Path("/usr/local/share/pixmaps"), Path("/usr/share/pixmaps")):
+    for root in (
+        Path("/usr/local/share/pixmaps"),
+        Path("/usr/share/pixmaps"),
+        Path("/var/lib/snapd/desktop/icons"),
+    ):
         if not root.is_dir():
             continue
         for ext in extensions:
@@ -1875,7 +1915,7 @@ def capture_profile(
             "application_install_mode": "online-selective",
             "profile_version": __version__,
             "asset_mode": asset_mode,
-            "fidelity_schema": 9,
+            "fidelity_schema": 10,
             "visible_wallpaper": visible_wallpaper,
             "system_visual": system_visual,
             "desktop_surface": {

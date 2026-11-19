@@ -74,7 +74,7 @@ def test_v0327_captures_kickoff_favorites_order_membership_and_avatar(tmp_path: 
     profile = tmp_path / "profile"
     manifest = capture_profile(profile, home)
 
-    assert manifest.restore["fidelity_schema"] == 9
+    assert manifest.restore["fidelity_schema"] == 10
     assert (profile / "payload/home/.face").read_bytes() == b"avatar-bytes"
     assert (profile / "payload/home/.local/share/applications/alpha.desktop").is_file()
     assert (profile / "payload/home/.local/share/applications/beta.desktop").is_file()

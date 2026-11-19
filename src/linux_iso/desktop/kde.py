@@ -179,6 +179,13 @@ def referenced_application_desktops(home: Path) -> list[Path]:
 
     roots = [
         home / ".local/share/applications",
+        # Flatpak applications keep their exported launchers outside the
+        # conventional XDG application roots. Favorites pinned by desktop ID
+        # must still resolve during capture.
+        home / ".local/share/flatpak/exports/share/applications",
+        Path("/var/lib/flatpak/exports/share/applications"),
+        # Snap exports desktop launchers here on Debian-family systems.
+        Path("/var/lib/snapd/desktop/applications"),
         Path("/usr/local/share/applications"),
         Path("/usr/share/applications"),
     ]

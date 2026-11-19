@@ -160,7 +160,7 @@ def test_v041_installed_system_contains_batch_diagnostic_collector(tmp_path: Pat
         "runtime-wallpaper.txt",
         "exec-health.txt",
         "desktop-installer-journal.txt",
-        "computer:/ KIO test",
+        "Dolphin filesystem compatibility test",
         "systemctl --failed",
         "first-login-report.json",
     ):

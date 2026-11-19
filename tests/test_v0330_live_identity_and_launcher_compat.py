@@ -90,7 +90,7 @@ def test_v0330_pardus_mycomputer_launcher_gets_portable_kde_exec(tmp_path: Path)
 
     captured = _copy_file(src, dst, home, "desktop-surface-launcher")
     text = dst.read_text(encoding="utf-8")
-    assert "Exec=dolphin computer:/" in text
+    assert "Exec=dolphin /" in text
     assert "pardus-mycomputer" not in text
     assert captured.sha256
 

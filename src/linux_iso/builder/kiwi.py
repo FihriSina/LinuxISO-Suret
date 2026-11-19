@@ -100,6 +100,12 @@ UBUNTU_2604_KDE = BaseRecipe(
         "xorg",
         "konsole",
         "kio-extras",
+        "kinfocenter",
+        "plasma-discover",
+        "flatpak",
+        "xdg-utils",
+        "plasma-discover-backend-flatpak",
+        "sddm-theme-breeze",
         "python3",
         "sudo",
         "network-manager",
@@ -850,19 +856,36 @@ def apply_system_visual(root: Path, home: Path, username: str, uid: int, gid: in
     sddm = visual.get("sddm") or {}
     sddm_src = SYSTEM_PAYLOAD / "sddm/theme"
     if sddm.get("theme_captured") and sddm_src.is_dir():
-        sddm_dst = root / "usr/share/sddm/themes/suret-source"
+        # Preserve the exact source theme for inspection/future native recipes,
+        # but do not activate it across distro/Qt boundaries: incompatible QML
+        # imports can leave SDDM as a blank white screen.
+        sddm_dst = root / "usr/share/sddm/themes/suret-source-archive"
         if sddm_dst.exists():
             shutil.rmtree(sddm_dst, ignore_errors=True)
         sddm_dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(sddm_src, sddm_dst)
-        settings = dict(sddm.get("settings") or {})
-        conf = root / "etc/sddm.conf.d/98-linux-iso-source-fidelity.conf"
-        conf.parent.mkdir(parents=True, exist_ok=True)
-        lines = ["[Theme]", "Current=suret-source"]
-        for key in ("CursorTheme", "Font"):
-            if settings.get(key):
-                lines.append(f"{key}={settings[key]}")
-        conf.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    settings = dict(sddm.get("settings") or {})
+    conf = root / "etc/sddm.conf.d/98-linux-iso-source-fidelity.conf"
+    conf.parent.mkdir(parents=True, exist_ok=True)
+    lines = ["[Theme]", "Current=breeze"]
+    for key in ("CursorTheme", "Font"):
+        if settings.get(key):
+            lines.append(f"{key}={settings[key]}")
+    conf.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    # Breeze is part of the target Plasma version, so use it as a stable shell
+    # while retaining the captured source wallpaper and avatar.
+    login_wallpapers = sorted((root / "usr/share/wallpapers").glob("suret-login-wallpaper.*"))
+    if login_wallpapers:
+        theme_user = root / "usr/share/sddm/themes/breeze/theme.conf.user"
+        theme_user.parent.mkdir(parents=True, exist_ok=True)
+        theme_user.write_text(
+            "[General]\n"
+            f"background=/usr/share/wallpapers/{login_wallpapers[0].name}\n"
+            "type=image\n",
+            encoding="utf-8",
+        )
 
 
 def main() -> int:
@@ -969,7 +992,8 @@ def apply_wallpaper(path: Path) -> bool:
         return False
     uri_js = json.dumps(path.resolve().as_uri())
     script = (
-        "var u=" + uri_js + "; var ds=desktops(); "
+        "var u=" + uri_js + "; var aid=currentActivity(); var ds=desktopsForActivity(aid); "
+        "if (!ds || !ds.length) ds=desktops(); "
         "for (var i=0; i<ds.length; ++i) { "
         "var d=ds[i]; d.wallpaperPlugin='org.kde.image'; "
         "d.currentConfigGroup=['Wallpaper','org.kde.image','General']; "
@@ -993,7 +1017,7 @@ def active_wallpaper() -> str:
     if qdbus is None:
         return ""
     script = (
-        'var ds=desktops(); if (!ds.length) ""; else {'
+        'var aid=currentActivity(); var ds=desktopsForActivity(aid); if (!ds || !ds.length) ds=desktops(); if (!ds.length) ""; else {'
         ' var d=ds[0]; var p=d.wallpaperPlugin;'
         ' d.currentConfigGroup=["Wallpaper",p,"General"]; d.readConfig("Image",""); }'
     )
@@ -1147,7 +1171,7 @@ for q in qdbus6 qdbus-qt6 qdbus; do
 done
 if [ -n "$qdbus" ]; then
   "$qdbus" org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.evaluateScript \
-    'var out=[]; var ds=desktops(); for (var i=0;i<ds.length;++i){var d=ds[i];var p=d.wallpaperPlugin;d.currentConfigGroup=["Wallpaper",p,"General"];out.push({id:d.id,screen:(typeof d.screen === "undefined" ? -1 : d.screen),plugin:p,image:d.readConfig("Image",""),slidePaths:d.readConfig("SlidePaths","")});} JSON.stringify(out);' \
+    'var out=[]; var aid=currentActivity(); var ds=desktopsForActivity(aid); if(!ds || !ds.length) ds=desktops(); for (var i=0;i<ds.length;++i){var d=ds[i];var p=d.wallpaperPlugin;d.currentConfigGroup=["Wallpaper",p,"General"];out.push({id:d.id,screen:(typeof d.screen === "undefined" ? -1 : d.screen),plugin:p,image:d.readConfig("Image",""),slidePaths:d.readConfig("SlidePaths",""),activity:aid});} JSON.stringify(out);' \
     > "$tmp/system/runtime-wallpaper.txt" 2>&1 || true
 fi
 
@@ -1167,8 +1191,8 @@ fi
 } > "$tmp/system/packages.txt"
 
 {
-  echo '== computer:/ KIO test =='
-  if command -v kioclient6 >/dev/null 2>&1; then timeout 8 kioclient6 stat 'computer:/' 2>&1 || true; fi
+  echo '== Dolphin filesystem compatibility test =='
+  if command -v dolphin >/dev/null 2>&1; then echo 'dolphin-root-view=available'; else echo 'dolphin-root-view=MISSING'; fi
   echo
   echo '== failed units =='
   systemctl --failed --no-pager 2>&1 || true
@@ -1432,6 +1456,25 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe, manifest: dict[s
     state_file = destination / "root/usr/share/linux-iso/profile/visible-state.json"
     state_file.parent.mkdir(parents=True, exist_ok=True)
     state_file.write_text(json.dumps(visible_state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    if visible_wallpaper.startswith("{{HOME}}/"):
+        wallpaper_rel = visible_wallpaper[len("{{HOME}}/") :]
+        wallpaper_src = destination / "root/usr/share/linux-iso/profile/payload/home" / wallpaper_rel
+        if wallpaper_src.is_file():
+            suffix = wallpaper_src.suffix.lower() or ".img"
+            wallpaper_dst = destination / "root/usr/share/wallpapers" / f"suret-login-wallpaper{suffix}"
+            wallpaper_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(wallpaper_src, wallpaper_dst)
+            # Configure the target-version Breeze SDDM theme in the live root as
+            # well. The same files are copied to the installed system by Calamares.
+            theme_user = destination / "root/usr/share/sddm/themes/breeze/theme.conf.user"
+            theme_user.parent.mkdir(parents=True, exist_ok=True)
+            theme_user.write_text(
+                "[General]\n"
+                f"background=/usr/share/wallpapers/{wallpaper_dst.name}\n"
+                "type=image\n",
+                encoding="utf-8",
+            )
 
     patcher = destination / "root/usr/lib/linux-iso/patch-calamares.py"
     patcher.parent.mkdir(parents=True, exist_ok=True)
