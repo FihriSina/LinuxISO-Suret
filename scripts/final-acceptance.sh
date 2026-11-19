@@ -10,7 +10,7 @@ RESULT_DIR=${3:-$HOME/linux-iso-build-result}
 
 command -v uv >/dev/null 2>&1 || { echo 'uv is required' >&2; exit 2; }
 
-printf '== Linux ISO - Suret v0.4.2 batch final acceptance ==\n'
+printf '== Linux ISO - Suret v0.4.3 batch final acceptance ==\n'
 printf 'Profile: %s\nBuild:   %s\nResult:  %s\n\n' "$PROFILE" "$BUILD_DIR" "$RESULT_DIR"
 
 rm -rf "$PROFILE" "$BUILD_DIR" "$RESULT_DIR"

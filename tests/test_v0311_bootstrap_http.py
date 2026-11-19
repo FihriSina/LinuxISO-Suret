@@ -52,9 +52,9 @@ def test_v0311_ubuntu_bootstrap_repositories_use_http():
     assert all(repo.url.startswith("http://") for repo in UBUNTU_2604_KDE.repositories)
 
 
-def test_v0311_signing_keys_remain_https():
+def test_v043_signing_keys_are_local_description_uris():
     assert all(
-        repo.signing_key and repo.signing_key.startswith("https://")
+        repo.signing_key and repo.signing_key.startswith("this://")
         for repo in UBUNTU_2604_KDE.repositories
     )
 

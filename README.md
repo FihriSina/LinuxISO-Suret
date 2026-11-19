@@ -4,7 +4,17 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.4.2
+## Current milestone: v0.4.3
+
+
+### v0.4.3: deterministic Ubuntu archive trust anchor
+
+- Bundles the Ubuntu Archive Automatic Signing Key (2018) used by Ubuntu 26.04.
+- KIWI repository signing keys now use a local `this://keys/...` URI instead of downloading the key at build time.
+- Keeps APT signature verification enabled; this is not an insecure/trusted-repository bypass.
+- Adds `ubuntu-keyring` to bootstrap so the installed image carries the standard Ubuntu archive keyring too.
+- Final acceptance no longer depends on `archive.ubuntu.com/.../ubuntu-archive-keyring.gpg` returning HTTP 200.
+- Adds `scripts/retry-acceptance.sh` to reuse an already-valid v10 profile after a build-only failure, avoiding another full desktop scan.
 
 ### v0.4.2: batch runtime compatibility and source-state repair
 

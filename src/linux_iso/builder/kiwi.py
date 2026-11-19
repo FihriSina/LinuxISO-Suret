@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -42,6 +43,11 @@ class BaseRecipe:
     preferred_box: str = "ubuntu"
 
 
+
+UBUNTU_ARCHIVE_KEY_URI = "this://keys/ubuntu-archive-key-2018.asc"
+UBUNTU_ARCHIVE_KEY_SHA256 = "2a3cc57ab6b47626b496a101c29af6dfe54d54d03d613f2326b9f2a30a15c39b"
+UBUNTU_ARCHIVE_KEY_ASC = '-----BEGIN PGP PUBLIC KEY BLOCK-----\n\nmQINBFufwdoBEADv/Gxytx/LcSXYuM0MwKojbBye81s0G1nEx+lz6VAUpIUZnbkq\ndXBHC+dwrGS/CeeLuAjPRLU8AoxE/jjvZVp8xFGEWHYdklqXGZ/gJfP5d3fIUBtZ\nHZEJl8B8m9pMHf/AQQdsC+YzizSG5t5Mhnotw044LXtdEEkx2t6Jz0OGrh+5Ioxq\nX7pZiq6Cv19BohaUioKMdp7ES6RYfN7ol6HSLFlrMXtVfh/ijpN9j3ZhVGVeRC8k\nKHQsJ5PkIbmvxBiUh7SJmfZUx0IQhNMaDHXfdZAGNtnhzzNReb1FqNLSVkrS/Pns\nAQzMhG1BDm2VOSF64jebKXffFqM5LXRQTeqTLsjUbbrqR6s/GCO8UF7jfUj6I7ta\nLygmsHO/JD4jpKRC0gbpUBfaiJyLvuepx3kWoqL3sN0LhlMI80+fA7GTvoOx4tpq\nVlzlE6TajYu+jfW3QpOFS5ewEMdL26hzxsZg/geZvTbArcP+OsJKRmhv4kNo6Ayd\nyHQ/3ZV/f3X9mT3/SPLbJaumkgp3Yzd6t5PeBu+ZQk/mN5WNNuaihNEV7llb1Zhv\nY0Fxu9BVd/BNl0rzuxp3rIinB2TX2SCg7wE5xXkwXuQ/2eTDE0v0HlGntkuZjGow\nDZkxHZQSxZVOzdZCRVaX/WEFLpKa2AQpw5RJrQ4oZ/OfifXyJzP27o03wQARAQAB\ntEJVYnVudHUgQXJjaGl2ZSBBdXRvbWF0aWMgU2lnbmluZyBLZXkgKDIwMTgpIDxm\ndHBtYXN0ZXJAdWJ1bnR1LmNvbT6JAjgEEwEKACIFAlufwdoCGwMGCwkIBwMCBhUI\nAgkKCwQWAgMBAh4BAheAAAoJEIcZINGZG8k8LHMQAKS2cnxz/5WaoCOWArf5g6UH\nbeOCgc5DBm0hCuFDZWWv427aGei3CPuLw0DGLCXZdyc5dqE8mvjMlOmmAKKlj1uG\ng3TYCbQWjWPeMnBPZbkFgkZoXJ7/6CB7bWRht1sHzpt1LTZ+SYDwOwJ68QRp7DRa\nZl9Y6QiUbeuhq2DUcTofVbBxbhrckN4ZteLvm+/nG9m/ciopc66LwRdkxqfJ32Cy\nq+1TS5VaIJDG7DWziG+Kbu6qCDM4QNlg3LH7p14CrRxAbc4lvohRgsV4eQqsIcdF\nkuVY5HPPj2K8TqpY6STe8Gh0aprG1RV8ZKay3KSMpnyV1fAKn4fM9byiLzQAovC0\nLZ9MMMsrAS/45AvC3IEKSShjLFn1X1dRCiO6/7jmZEoZtAp53hkf8SMBsi78hVNr\nBumZwfIdBA1v22+LY4xQK8q4XCoRcA9G+pvzU9YVW7cRnDZZGl0uwOw7z9PkQBF5\nKFKjWDz4fCk+K6+YtGpovGKekGBb8I7EA6UpvPgqA/QdI0t1IBP0N06RQcs1fUaA\nQEtz6DGy5zkRhR4pGSZn+dFET7PdAjEK84y7BdY4t+U1jcSIvBj0F2B7LwRL7xGp\nSpIKi/ekAXLs117bvFHaCvmUYN7JVp1GMmVFxhIdx6CFm3fxG8QjNb5tere/YqK+\nuOgcXny1UlwtCUzlrSaP\n=9AdM\n-----END PGP PUBLIC KEY BLOCK-----\n'
+
 UBUNTU_2604_KDE = BaseRecipe(
     id="ubuntu-26.04-kde",
     image_name="linux-iso-suret-ubuntu-26.04",
@@ -52,21 +58,21 @@ UBUNTU_2604_KDE = BaseRecipe(
             "http://archive.ubuntu.com/ubuntu",
             "resolute",
             "main restricted universe multiverse",
-            "https://archive.ubuntu.com/ubuntu/project/ubuntu-archive-keyring.gpg",
+            UBUNTU_ARCHIVE_KEY_URI,
         ),
         AptRepository(
             "ubuntu-updates",
             "http://archive.ubuntu.com/ubuntu",
             "resolute-updates",
             "main restricted universe multiverse",
-            "https://archive.ubuntu.com/ubuntu/project/ubuntu-archive-keyring.gpg",
+            UBUNTU_ARCHIVE_KEY_URI,
         ),
         AptRepository(
             "ubuntu-security",
             "http://security.ubuntu.com/ubuntu",
             "resolute-security",
             "main restricted universe multiverse",
-            "https://archive.ubuntu.com/ubuntu/project/ubuntu-archive-keyring.gpg",
+            UBUNTU_ARCHIVE_KEY_URI,
         ),
     ),
     bootstrap_packages=(
@@ -76,6 +82,7 @@ UBUNTU_2604_KDE = BaseRecipe(
         "coreutils",
         "dpkg",
         "apt",
+        "ubuntu-keyring",
         "libc6",
         "systemd-sysv",
     ),
@@ -1812,6 +1819,9 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe, manifest: dict[s
         "echo \"[$(date -Is)] Linux ISO - Suret build starting\"\n"
         "echo \"Build log: $BUILD_LOG\"\n"
         "echo \"Resource log: $RESOURCE_LOG\"\n"
+        "KEY_FILE=$HERE/keys/ubuntu-archive-key-2018.asc\n"
+        "test -s \"$KEY_FILE\" || { echo \"Bundled Ubuntu archive signing key missing: $KEY_FILE\" >&2; exit 8; }\n"
+        f"echo '{UBUNTU_ARCHIVE_KEY_SHA256}  '\"$KEY_FILE\" | sha256sum -c - >/dev/null || {{ echo 'Bundled Ubuntu archive signing key integrity check failed' >&2; exit 8; }}\n"
         "echo 'Validating KIWI description before starting the build box...'\n"
         "uv tool run --from \"kiwi==$KIWI_VERSION\" kiwi-ng --logfile stdout image info --description \"$HERE\" > \"$OUT/kiwi-preflight.log\" 2>&1 || { cat \"$OUT/kiwi-preflight.log\" >&2; echo 'KIWI description preflight failed.' >&2; exit 7; }\n"
         "cat \"$OUT/kiwi-preflight.log\"\n"
@@ -2002,6 +2012,21 @@ def generate_kiwi_project(
     if destination.exists():
         shutil.rmtree(destination)
     destination.mkdir(parents=True)
+
+    # Keep the Ubuntu archive trust anchor inside the staged KIWI description.
+    # This removes a fragile build-time dependency on downloading the key from
+    # archive.ubuntu.com, while preserving full APT signature verification.
+    key_bytes = UBUNTU_ARCHIVE_KEY_ASC.encode("utf-8")
+    key_digest = hashlib.sha256(key_bytes).hexdigest()
+    if key_digest != UBUNTU_ARCHIVE_KEY_SHA256:
+        raise BuilderError(
+            "Bundled Ubuntu archive signing key failed integrity check: "
+            f"expected {UBUNTU_ARCHIVE_KEY_SHA256}, got {key_digest}"
+        )
+    keys_dir = destination / "keys"
+    keys_dir.mkdir(parents=True, exist_ok=True)
+    (keys_dir / "ubuntu-archive-key-2018.asc").write_bytes(key_bytes)
+
     overlay = destination / "root"
     share_profile = overlay / "usr/share/linux-iso/profile"
     share_profile.parent.mkdir(parents=True, exist_ok=True)

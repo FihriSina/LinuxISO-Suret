@@ -1,3 +1,12 @@
+## v0.4.3 implemented
+
+- Removed the build-time HTTP(S) fetch of the Ubuntu archive signing key.
+- Bundled and integrity-pinned Ubuntu Archive Automatic Signing Key (2018), fingerprint `F6ECB3762474EDA9D21B7022871920D1991BC93C`.
+- KIWI repositories use `this://keys/ubuntu-archive-key-2018.asc`, so repository verification remains enabled without a remote key download.
+- Added `ubuntu-keyring` to bootstrap packages so the target image also carries Ubuntu's standard archive trust package.
+- Generated `build.sh` verifies the staged key SHA-256 before invoking KIWI.
+- 141 regression tests pass.
+
 ## v0.4.2 implemented
 
 - Current Plasma activity/screen 0 is authoritative for visible wallpaper capture.
