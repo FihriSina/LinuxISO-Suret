@@ -208,18 +208,26 @@ def patch_text_configs(source: str, kernel: str) -> None:
 def patch_settings() -> None:
     settings = yaml.safe_load(SETTINGS.read_text(encoding="utf-8")) or {}
     instances = settings.setdefault("instances", [])
-    wanted = {
-        "id": "linuxiso_before_bootloader_kerncopy",
-        "module": "shellprocess",
-        "config": "linuxiso_before_bootloader_kerncopy.conf",
-    }
-    if not any(
-        isinstance(item, dict)
-        and item.get("module") == wanted["module"]
-        and item.get("id") == wanted["id"]
-        for item in instances
-    ):
-        instances.append(wanted)
+    wanted_instances = (
+        {
+            "id": "linuxiso_before_bootloader_kerncopy",
+            "module": "shellprocess",
+            "config": "linuxiso_before_bootloader_kerncopy.conf",
+        },
+        {
+            "id": "linuxiso_initramfs",
+            "module": "shellprocess",
+            "config": "linuxiso_initramfs.conf",
+        },
+    )
+    for wanted in wanted_instances:
+        if not any(
+            isinstance(item, dict)
+            and item.get("module") == wanted["module"]
+            and item.get("id") == wanted["id"]
+            for item in instances
+        ):
+            instances.append(wanted)
 
     for phase in settings.get("sequence", []):
         if not isinstance(phase, dict) or not isinstance(phase.get("exec"), list):
@@ -228,6 +236,8 @@ def patch_settings() -> None:
         for item in phase["exec"]:
             if item == "shellprocess@before_bootloader_kerncopy":
                 item = "shellprocess@linuxiso_before_bootloader_kerncopy"
+            if isinstance(item, str) and (item == "initramfs" or item.startswith("initramfs@")):
+                item = "shellprocess@linuxiso_initramfs"
             if item == "contextualprocess@before_bootloader":
                 continue
             if item not in patched:
@@ -255,6 +265,16 @@ def main() -> None:
     }
     (MODULES / "linuxiso_before_bootloader_kerncopy.conf").write_text(
         yaml.safe_dump(kerncopy, sort_keys=False),
+        encoding="utf-8",
+    )
+    initramfs = {
+        "dontChroot": False,
+        "timeout": 300,
+        "verbose": True,
+        "script": ["/usr/lib/linux-iso/update-target-initramfs"],
+    }
+    (MODULES / "linuxiso_initramfs.conf").write_text(
+        yaml.safe_dump(initramfs, sort_keys=False),
         encoding="utf-8",
     )
     patch_text_configs(source, kernel)
@@ -527,6 +547,33 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         encoding="utf-8",
     )
     media_helper.chmod(0o755)
+
+    target_initramfs = destination / "root/usr/lib/linux-iso/update-target-initramfs"
+    target_initramfs.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "if ! command -v update-initramfs >/dev/null 2>&1; then\n"
+        "  echo 'Linux ISO - Suret: update-initramfs is missing in target system' >&2\n"
+        "  exit 12\n"
+        "fi\n"
+        "found=0\n"
+        "for modules_dir in /lib/modules/*; do\n"
+        "  [ -d \"$modules_dir\" ] || continue\n"
+        "  version=${modules_dir##*/}\n"
+        "  found=1\n"
+        "  if [ -e \"/boot/initrd.img-$version\" ]; then\n"
+        "    update-initramfs -u -k \"$version\"\n"
+        "  else\n"
+        "    update-initramfs -c -k \"$version\"\n"
+        "  fi\n"
+        "done\n"
+        "if [ \"$found\" -eq 0 ]; then\n"
+        "  echo 'Linux ISO - Suret: no target kernel modules found for initramfs generation' >&2\n"
+        "  exit 13\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    target_initramfs.chmod(0o755)
 
     installer = destination / "root/usr/bin/linux-iso-installer"
     installer.parent.mkdir(parents=True, exist_ok=True)

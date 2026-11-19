@@ -4,7 +4,15 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.3.20
+## Current milestone: v0.3.21
+
+
+### v0.3.21: Ubuntu 26.04 initramfs compatibility
+
+- Replaces Calamares' built-in Debian `initramfs` job with a Suret-owned target-chroot shellprocess.
+- Avoids Calamares' hard-coded `update-initramfs -c -t`, because Ubuntu 26.04 `initramfs-tools` 0.151 no longer accepts `-t`.
+- Creates missing target initramfs images and updates existing ones per installed kernel version without reintroducing Casper assumptions.
+- Keeps the v0.3.20 kernel-copy/runtime sequence hardening unchanged.
 
 
 ### v0.3.20: Calamares runtime sequence hardening
@@ -222,7 +230,7 @@ Clean base system
 
 ## Supported scope
 
-| Area | v0.3.20 |
+| Area | v0.3.21 |
 |---|---|
 | KDE Plasma capture | Yes |
 | active-only appearance capture | Yes |
@@ -249,7 +257,7 @@ Cross-family native package translation is intentionally blocked. A Pacman profi
 
 A source Plasma desktop with customized panels, third-party plasmoids, manually downloaded icons, a custom wallpaper, cursor/theme/font set, KWin additions and a styled terminal must install into a clean VM without manual desktop reconstruction. Optional applications should appear only when selected during installation.
 
-## Development environment diagnostics (v0.3.20)
+## Development environment diagnostics (v0.3.21)
 
 `uv` manages the project environment. The project explicitly enables the `dev`
 dependency group, which contains pytest.
