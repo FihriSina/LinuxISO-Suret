@@ -1,3 +1,15 @@
+## v0.3.29 implemented
+
+- Installer application cards now rank captured icons by quality, preferring SVG/SVGZ and large PNG assets instead of the first small icon match.
+- Card QML renders application icons at a controlled size with explicit high-resolution source sizing, smoothing and mipmapping, eliminating the previous blurry full-card upscaling.
+- The localized XDG desktop directory (`Desktop`, `Masaüstü`, etc.) is captured as visible UI state; `.desktop`, `.directory` and `.url` launchers are retained while arbitrary personal desktop documents remain excluded.
+- Plasma icon applets that reference source-distro `.desktop` files outside the home directory are snapshotted and their paths rewritten to portable user-local launchers.
+- `user-dirs.dirs` / `user-dirs.locale` are captured so localized desktop placement survives restore.
+- Profile verification now validates every visible desktop/applet launcher before ISO build and reports the launcher count.
+- Wallpaper fidelity no longer trusts only persisted Plasma config: when a live Plasma session is available, capture queries the supported Plasma scripting API over D-Bus and pins the installed snapshot to the wallpaper actually visible at scan time.
+- Fidelity schema v7 requires a fresh scan.
+- Full regression suite passes.
+
 ## v0.3.28 implemented
 
 - Source distribution identity is now part of the captured profile: distro name/version, logo token, support/home URLs and a captured logo file when available.

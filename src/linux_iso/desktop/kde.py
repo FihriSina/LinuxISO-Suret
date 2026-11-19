@@ -35,6 +35,8 @@ KDE_CONFIG_FILES = [
     ".config/qt5ct/qt5ct.conf",
     ".config/qt6ct/qt6ct.conf",
     ".config/Kvantum/kvantum.kvconfig",
+    ".config/user-dirs.dirs",
+    ".config/user-dirs.locale",
     ".face",
     ".face.icon",
 ]

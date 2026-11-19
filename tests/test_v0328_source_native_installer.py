@@ -61,7 +61,7 @@ def _profile(tmp_path: Path) -> Path:
         "restore": {
             "home_placeholder": "{{HOME}}",
             "payload_root": "payload/home",
-            "fidelity_schema": 6,
+            "fidelity_schema": 7,
         },
     }
     (profile / "manifest.yaml").write_text(

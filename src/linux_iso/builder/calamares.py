@@ -30,6 +30,8 @@ PAYLOAD = Path("/usr/share/linux-iso/profile/payload/home")
 
 PERSONALIZATION_PATHS = (
     "Desktop",
+    "Masaüstü",
+    "Masaustu",
     ".config/kdeglobals",
     ".config/kwinrc",
     ".config/plasmashellrc",
@@ -57,6 +59,8 @@ PERSONALIZATION_PATHS = (
     ".config/qt5ct",
     ".config/qt6ct",
     ".config/Kvantum",
+    ".config/user-dirs.dirs",
+    ".config/user-dirs.locale",
     ".local/share/plasma",
     ".local/share/aurorae",
     ".local/share/kwin",
@@ -135,8 +139,31 @@ def _target_ids(root, username):
     raise RuntimeError("Could not resolve target user UID/GID")
 
 
+def _captured_desktop_relative():
+    config = PAYLOAD / ".config/user-dirs.dirs"
+    if not config.is_file():
+        return None
+    try:
+        lines = config.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        stripped = line.strip()
+        if not stripped.startswith("XDG_DESKTOP_DIR="):
+            continue
+        raw = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+        for prefix in ("{{HOME}}/", "$HOME/", "${HOME}/"):
+            if raw.startswith(prefix):
+                return raw[len(prefix):].strip("/") or None
+    return None
+
+
 def _clear_vendor_personalization(target_home):
-    for relative in PERSONALIZATION_PATHS:
+    relatives = list(PERSONALIZATION_PATHS)
+    captured_desktop = _captured_desktop_relative()
+    if captured_desktop and captured_desktop not in relatives:
+        relatives.append(captured_desktop)
+    for relative in relatives:
         path = target_home / relative
         if path.is_symlink() or path.is_file():
             path.unlink(missing_ok=True)
@@ -538,17 +565,57 @@ def _write_source_branding(profile: Path, root: Path) -> dict[str, str]:
     return identity
 
 
+def _png_pixel_area(path: Path) -> int:
+    """Read PNG dimensions without adding an image-library dependency."""
+    try:
+        raw = path.read_bytes()[:24]
+    except OSError:
+        return 0
+    if len(raw) < 24 or raw[:8] != b"\x89PNG\r\n\x1a\n" or raw[12:16] != b"IHDR":
+        return 0
+    width = int.from_bytes(raw[16:20], "big")
+    height = int.from_bytes(raw[20:24], "big")
+    return width * height
+
+
+def _icon_quality_score(path: Path, exact_names: set[str]) -> tuple[int, int, int, str]:
+    """Prefer scalable or genuinely high-resolution application icons.
+
+    Previous releases returned the first matching icon, which was frequently a
+    16/32/48 px PNG and became visibly blurred when Calamares enlarged it.
+    """
+    suffix = path.suffix.lower()
+    stem = re.sub(r"[^a-z0-9]+", "", path.stem.lower())
+    exact = 1 if stem in exact_names else 0
+    if suffix == ".svg":
+        quality = 2_000_000_000
+    elif suffix == ".svgz":
+        quality = 1_900_000_000
+    elif suffix == ".png":
+        quality = _png_pixel_area(path)
+        match = re.search(r"/(\d+)x(\d+)/", path.as_posix())
+        if match:
+            quality = max(quality, int(match.group(1)) * int(match.group(2)))
+    elif suffix == ".xpm":
+        quality = 1
+    else:
+        quality = 0
+    app_path = 1 if "/apps/" in path.as_posix() else 0
+    return (exact, quality, app_path, path.as_posix())
+
+
 def _captured_app_icon(profile: Path, item: dict[str, Any]) -> Path | None:
     payload = profile / "payload/home"
-    app_dirs = (payload / ".local/share/applications", payload / "Desktop")
+    app_dirs = (payload / ".local/share/applications", payload / "Desktop", payload / "Masaüstü", payload / "Masaustu")
     package_name = str(item.get("name") or "")
     display_name = str(item.get("display_name") or package_name)
-    tokens = {
+    raw_tokens = {
         package_name.lower(),
         package_name.rsplit(".", 1)[-1].lower(),
         display_name.lower(),
         display_name.lower().replace(" ", "-"),
     }
+    normalized_tokens = {re.sub(r"[^a-z0-9]+", "", token) for token in raw_tokens if token}
     icon_names: list[str] = []
     for app_dir in app_dirs:
         if not app_dir.is_dir():
@@ -559,7 +626,7 @@ def _captured_app_icon(profile: Path, item: dict[str, Any]) -> Path | None:
             except OSError:
                 continue
             haystack = (desktop.stem + "\n" + text).lower()
-            if not any(token and token in haystack for token in tokens):
+            if not any(token and token in haystack for token in raw_tokens):
                 continue
             for line in text.splitlines():
                 if line.startswith("Icon="):
@@ -567,36 +634,46 @@ def _captured_app_icon(profile: Path, item: dict[str, Any]) -> Path | None:
                     if value:
                         icon_names.append(value)
                     break
+
+    candidates: set[Path] = set()
     for value in icon_names:
         if value.startswith("{{HOME}}/"):
             candidate = payload / value[len("{{HOME}}/") :]
             if candidate.is_file():
-                return candidate
+                candidates.add(candidate)
+            continue
         path = Path(value)
         if path.is_absolute():
-            # Absolute source-home paths are rewritten during capture; absolute
-            # system icons are intentionally not trusted here.
             continue
+        names = {value, Path(value).stem}
         for base in (payload / ".local/share/icons", payload / ".icons", payload / ".local/share/pixmaps"):
             if not base.is_dir():
                 continue
-            for suffix in (".svg", ".svgz", ".png", ".xpm"):
-                matches = list(base.rglob(value + suffix))
-                if matches:
-                    return matches[0]
+            for name in names:
+                for suffix in (".svg", ".svgz", ".png", ".xpm"):
+                    try:
+                        candidates.update(x for x in base.rglob(name + suffix) if x.is_file())
+                    except OSError:
+                        pass
+
     # Last chance: captured icons whose basename resembles the package/app.
-    normalized = {re.sub(r"[^a-z0-9]+", "", token) for token in tokens if token}
-    for base in (payload / ".local/share/icons", payload / ".icons"):
+    for base in (payload / ".local/share/icons", payload / ".icons", payload / ".local/share/pixmaps"):
         if not base.is_dir():
             continue
-        for candidate in base.rglob("*"):
+        try:
+            iterator = base.rglob("*")
+        except OSError:
+            continue
+        for candidate in iterator:
             if not candidate.is_file() or candidate.suffix.lower() not in {".svg", ".svgz", ".png", ".xpm"}:
                 continue
             stem = re.sub(r"[^a-z0-9]+", "", candidate.stem.lower())
-            if stem and any(token and (stem == token or stem in token or token in stem) for token in normalized):
-                return candidate
-    return None
+            if stem and any(token and (stem == token or stem in token or token in stem) for token in normalized_tokens):
+                candidates.add(candidate)
 
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: _icon_quality_score(path, normalized_tokens))
 
 def _app_cover_svg(item: dict[str, Any], identity: dict[str, str]) -> str:
     display = str(item.get("display_name") or item["name"])
@@ -639,7 +716,7 @@ def _category_qml(profile: Path, category: dict[str, Any], identity: dict[str, s
     apps_json = json.dumps(apps, ensure_ascii=False)
     selected_json = json.dumps(selected, ensure_ascii=False)
     accent = identity["accent"]
-    return f'''import QtQuick 2.15\nimport QtQuick.Controls 2.15\nimport QtQuick.Layouts 1.15\n\nItem {{\n    id: root\n    width: parent ? parent.width : 960\n    height: parent ? parent.height : 640\n    property var apps: {apps_json}\n    property var selections: {selected_json}\n    function syncChoice() {{\n        var ids = [];\n        for (var i = 0; i < apps.length; ++i) {{\n            if (selections[apps[i].id]) ids.push(apps[i].id);\n        }}\n        config.packageChoice = ids.join(",");\n    }}\n    function updateChoice(id, checked) {{ selections[id] = checked; syncChoice(); }}\n    Component.onCompleted: syncChoice()\n\n    ColumnLayout {{\n        anchors.fill: parent\n        anchors.margins: 18\n        spacing: 12\n        Label {{ text: "{category['label']}"; font.pixelSize: 28; font.bold: true; Layout.fillWidth: true }}\n        Label {{ text: "Tum uygulamalar secili baslar. Istemediklerinizin isaretini kaldirin."; opacity: 0.72; wrapMode: Text.WordWrap; Layout.fillWidth: true }}\n        ScrollView {{\n            Layout.fillWidth: true\n            Layout.fillHeight: true\n            clip: true\n            GridLayout {{\n                width: Math.max(280, root.width - 50)\n                columns: Math.max(1, Math.floor(width / 285))\n                rowSpacing: 14\n                columnSpacing: 14\n                Repeater {{\n                    model: root.apps\n                    delegate: Frame {{\n                        Layout.preferredWidth: 270\n                        Layout.preferredHeight: 290\n                        padding: 10\n                        background: Rectangle {{ color: "#171D23"; border.color: check.checked ? "{accent}" : "#3B4652"; border.width: check.checked ? 2 : 1; radius: 14 }}\n                        ColumnLayout {{\n                            anchors.fill: parent\n                            spacing: 8\n                            Image {{ source: modelData.image; Layout.fillWidth: true; Layout.preferredHeight: 145; fillMode: Image.PreserveAspectFit; asynchronous: true; cache: true }}\n                            RowLayout {{\n                                Layout.fillWidth: true\n                                Label {{ text: modelData.name; color: "#FFFFFF"; font.pixelSize: 17; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }}\n                                Label {{ text: modelData.provider; color: "#AAB4BE"; font.pixelSize: 10; opacity: 0.85 }}\n                            }}\n                            Label {{ text: modelData.description; color: "#CBD3DA"; wrapMode: Text.WordWrap; maximumLineCount: 3; elide: Text.ElideRight; opacity: 0.95; Layout.fillWidth: true; Layout.fillHeight: true }}\n                            CheckBox {{ id: check; text: "Kur"; checked: true; palette.text: "#FFFFFF"; onToggled: root.updateChoice(modelData.id, checked) }}\n                        }}\n                    }}\n                }}\n            }}\n        }}\n    }}\n}}\n'''
+    return f'''import QtQuick 2.15\nimport QtQuick.Controls 2.15\nimport QtQuick.Layouts 1.15\n\nItem {{\n    id: root\n    width: parent ? parent.width : 960\n    height: parent ? parent.height : 640\n    property var apps: {apps_json}\n    property var selections: {selected_json}\n    function syncChoice() {{\n        var ids = [];\n        for (var i = 0; i < apps.length; ++i) {{\n            if (selections[apps[i].id]) ids.push(apps[i].id);\n        }}\n        config.packageChoice = ids.join(",");\n    }}\n    function updateChoice(id, checked) {{ selections[id] = checked; syncChoice(); }}\n    Component.onCompleted: syncChoice()\n\n    ColumnLayout {{\n        anchors.fill: parent\n        anchors.margins: 18\n        spacing: 12\n        Label {{ text: "{category['label']}"; font.pixelSize: 28; font.bold: true; Layout.fillWidth: true }}\n        Label {{ text: "Tum uygulamalar secili baslar. Istemediklerinizin isaretini kaldirin."; opacity: 0.72; wrapMode: Text.WordWrap; Layout.fillWidth: true }}\n        ScrollView {{\n            Layout.fillWidth: true\n            Layout.fillHeight: true\n            clip: true\n            GridLayout {{\n                width: Math.max(280, root.width - 50)\n                columns: Math.max(1, Math.floor(width / 285))\n                rowSpacing: 14\n                columnSpacing: 14\n                Repeater {{\n                    model: root.apps\n                    delegate: Frame {{\n                        Layout.preferredWidth: 270\n                        Layout.preferredHeight: 290\n                        padding: 10\n                        background: Rectangle {{ color: "#171D23"; border.color: check.checked ? "{accent}" : "#3B4652"; border.width: check.checked ? 2 : 1; radius: 14 }}\n                        ColumnLayout {{\n                            anchors.fill: parent\n                            spacing: 8\n                            Rectangle {{\n                                Layout.fillWidth: true\n                                Layout.preferredHeight: 150\n                                radius: 11\n                                clip: true\n                                color: modelData.imageKind === "icon" ? "#202832" : "transparent"\n                                Rectangle {{ anchors.fill: parent; visible: modelData.imageKind === "icon"; gradient: Gradient {{ GradientStop {{ position: 0.0; color: "#26323D" }} GradientStop {{ position: 1.0; color: "#151A20" }} }} }}\n                                Image {{\n                                    anchors.centerIn: parent\n                                    width: modelData.imageKind === "icon" ? 104 : parent.width\n                                    height: modelData.imageKind === "icon" ? 104 : parent.height\n                                    source: modelData.image\n                                    sourceSize.width: modelData.imageKind === "icon" ? 256 : 720\n                                    sourceSize.height: modelData.imageKind === "icon" ? 256 : 420\n                                    fillMode: Image.PreserveAspectFit\n                                    smooth: true\n                                    mipmap: true\n                                    asynchronous: true\n                                    cache: true\n                                }}\n                            }}\n                            RowLayout {{\n                                Layout.fillWidth: true\n                                Label {{ text: modelData.name; color: "#FFFFFF"; font.pixelSize: 17; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }}\n                                Label {{ text: modelData.provider; color: "#AAB4BE"; font.pixelSize: 10; opacity: 0.85 }}\n                            }}\n                            Label {{ text: modelData.description; color: "#CBD3DA"; wrapMode: Text.WordWrap; maximumLineCount: 3; elide: Text.ElideRight; opacity: 0.95; Layout.fillWidth: true; Layout.fillHeight: true }}\n                            CheckBox {{ id: check; text: "Kur"; checked: true; palette.text: "#FFFFFF"; onToggled: root.updateChoice(modelData.id, checked) }}\n                        }}\n                    }}\n                }}\n            }}\n        }}\n    }}\n}}\n'''
 
 
 def _category_conf(category: dict[str, Any], qml_path: Path) -> dict[str, Any]:

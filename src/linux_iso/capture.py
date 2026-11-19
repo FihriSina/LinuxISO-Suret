@@ -3,8 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import sqlite3
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -298,6 +300,196 @@ def _capture_kickoff_favorites_state(
     return captured
 
 
+
+def _runtime_plasma_wallpaper_state(home: Path) -> list[dict[str, object]]:
+    """Read the wallpaper state from the running Plasma shell when possible.
+
+    The on-disk applet config may lag behind the wallpaper currently visible on
+    screen. Plasma's supported scripting API exposes each live Desktop
+    containment, its wallpaper plugin and the current Image/SlidePaths values.
+    Failure is non-fatal so headless scans still fall back to config parsing.
+    """
+    qdbus = next(
+        (tool for name in ("qdbus6", "qdbus-qt6", "qdbus") if (tool := shutil.which(name))),
+        None,
+    )
+    if not qdbus:
+        return []
+    script = (
+        'var out=[]; var ds=desktops(); '
+        'for (var i=0; i<ds.length; ++i) {'
+        ' var d=ds[i]; var p=d.wallpaperPlugin;'
+        ' d.currentConfigGroup=["Wallpaper",p,"General"];'
+        ' out.push({id:d.id,plugin:p,image:d.readConfig("Image",""),slidePaths:d.readConfig("SlidePaths","")});'
+        '} JSON.stringify(out);'
+    )
+    try:
+        proc = subprocess.run(
+            [qdbus, "org.kde.plasmashell", "/PlasmaShell", "org.kde.PlasmaShell.evaluateScript", script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=8,
+            env=os.environ.copy(),
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if proc.returncode != 0:
+        return []
+    output = proc.stdout.strip()
+    candidates = [output] + [line.strip() for line in output.splitlines() if line.strip().startswith("[")]
+    for candidate in candidates:
+        try:
+            data = json.loads(candidate)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(data, list):
+            continue
+        result: list[dict[str, object]] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            try:
+                containment_id = int(item.get("id"))
+            except (TypeError, ValueError):
+                continue
+            result.append(
+                {
+                    "id": containment_id,
+                    "plugin": str(item.get("plugin") or ""),
+                    "image": str(item.get("image") or ""),
+                    "slidePaths": str(item.get("slidePaths") or ""),
+                }
+            )
+        return result
+    return []
+
+
+def _runtime_wallpaper_files(home: Path, states: list[dict[str, object]]) -> list[Path]:
+    result: list[Path] = []
+    seen: set[Path] = set()
+    for state in states:
+        raw = str(state.get("image") or "")
+        path = _normalize_local_config_path(raw, home)
+        if path is not None and path.is_file() and path not in seen:
+            seen.add(path)
+            result.append(path)
+    return result
+
+
+def _portable_wallpaper_target(src: Path, home: Path, replacements: dict[str, str]) -> str | None:
+    try:
+        relative = src.resolve().relative_to(home.resolve())
+    except (OSError, ValueError):
+        try:
+            return replacements.get(str(src.resolve()))
+        except OSError:
+            return None
+    return f"{{{{HOME}}}}/{relative.as_posix()}"
+
+
+def _apply_runtime_wallpaper_state(
+    payload_home: Path,
+    home: Path,
+    states: list[dict[str, object]],
+    replacements: dict[str, str],
+    captured_configs: list[CapturedFile],
+) -> None:
+    """Pin copied Plasma containments to the wallpaper actually visible at scan time."""
+    usable: dict[int, str] = {}
+    for state in states:
+        try:
+            containment_id = int(state.get("id"))
+        except (TypeError, ValueError):
+            continue
+        image = _normalize_local_config_path(str(state.get("image") or ""), home)
+        if image is None or not image.is_file():
+            continue
+        target = _portable_wallpaper_target(image, home, replacements)
+        if target:
+            usable[containment_id] = "file://" + target
+    if not usable:
+        return
+
+    config = payload_home / ".config/plasma-org.kde.plasma.desktop-appletsrc"
+    if not config.is_file():
+        return
+    try:
+        lines = config.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return
+
+    new_lines: list[str] = []
+    section = ""
+    active_id: int | None = None
+    wallpaper_section_for: int | None = None
+    section_had_image = False
+    changed = False
+
+    def finish_section() -> None:
+        nonlocal changed
+        if wallpaper_section_for in usable and not section_had_image:
+            new_lines.append(f"Image={usable[wallpaper_section_for]}")
+            changed = True
+
+    containment_re = re.compile(r"^\[Containments\]\[(\d+)\](.*)$")
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            finish_section()
+            section = stripped
+            section_had_image = False
+            wallpaper_section_for = None
+            active_id = None
+            match = containment_re.match(section)
+            if match:
+                active_id = int(match.group(1))
+                suffix = match.group(2)
+                if active_id in usable and "[Wallpaper]" in suffix and suffix.endswith("[General]"):
+                    wallpaper_section_for = active_id
+                    replacement = re.sub(
+                        r"\[Wallpaper\]\[[^\]]+\]\[General\]$",
+                        "[Wallpaper][org.kde.image][General]",
+                        section,
+                    )
+                    if replacement != section:
+                        line = replacement
+                        section = replacement
+                        changed = True
+            new_lines.append(line)
+            continue
+
+        if active_id in usable and section == f"[Containments][{active_id}]" and "=" in line:
+            key, _value = line.split("=", 1)
+            if key.strip().lower() == "wallpaperplugin":
+                replacement = "wallpaperplugin=org.kde.image"
+                new_lines.append(replacement)
+                if line != replacement:
+                    changed = True
+                continue
+
+        if wallpaper_section_for in usable and "=" in line:
+            key, _value = line.split("=", 1)
+            if key.strip() == "Image":
+                replacement = f"Image={usable[wallpaper_section_for]}"
+                new_lines.append(replacement)
+                section_had_image = True
+                if line != replacement:
+                    changed = True
+                continue
+        new_lines.append(line)
+
+    finish_section()
+    if not changed:
+        return
+    config.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+    destination = "{{HOME}}/.config/plasma-org.kde.plasma.desktop-appletsrc"
+    for item in captured_configs:
+        if item.destination == destination:
+            item.sha256 = sha256_file(config)
+            break
+
+
 def _slideshow_initial_overrides(home: Path) -> dict[str, str]:
     """Choose the best approximation of the currently visible slideshow image.
 
@@ -551,6 +743,135 @@ def _copy_local_entry(
         return [_copy_file(src, payload_home / relative, home, kind)]
     return []
 
+
+
+def _xdg_desktop_directory(home: Path) -> Path:
+    """Return the user's visible XDG desktop directory.
+
+    KDE installations may localize this directory (for example ``Masaüstü``)
+    instead of using ``Desktop``.  The setting is kept in
+    ``~/.config/user-dirs.dirs`` and may use either ``$HOME`` or an absolute
+    home path.
+    """
+    config = home / ".config/user-dirs.dirs"
+    if config.is_file():
+        try:
+            text = config.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("XDG_DESKTOP_DIR="):
+                continue
+            raw = stripped.split("=", 1)[1].strip().strip('"').strip("'")
+            raw = raw.replace("${HOME}", str(home)).replace("$HOME", str(home))
+            if raw.startswith("~/"):
+                raw = str(home / raw[2:])
+            candidate = Path(raw)
+            if not candidate.is_absolute():
+                candidate = home / candidate
+            try:
+                resolved = candidate.resolve(strict=False)
+                resolved.relative_to(home.resolve())
+            except (OSError, ValueError):
+                break
+            return resolved
+    for name in ("Desktop", "Masaüstü", "Masaustu"):
+        candidate = home / name
+        if candidate.is_dir():
+            return candidate
+    return home / "Desktop"
+
+
+def _visible_desktop_launchers(home: Path) -> list[Path]:
+    """Return visible launcher/control files from the XDG desktop directory.
+
+    Personal documents are deliberately excluded: the ISO profile should
+    reproduce what the user sees without accidentally embedding arbitrary
+    desktop documents.  Application/link launchers and ``.directory`` metadata
+    are part of the desktop UI and are safe to reproduce.
+    """
+    desktop = _xdg_desktop_directory(home)
+    if not desktop.is_dir():
+        return []
+    allowed = {".desktop", ".directory", ".url"}
+    result: list[Path] = []
+    try:
+        entries = sorted(desktop.iterdir(), key=lambda item: item.name.casefold())
+    except OSError:
+        return []
+    for entry in entries:
+        if entry.name.startswith(".") and entry.name != ".directory":
+            continue
+        suffix = entry.suffix.lower()
+        if suffix not in allowed:
+            continue
+        if entry.is_symlink():
+            try:
+                target = entry.resolve(strict=True)
+            except OSError:
+                continue
+            if target.is_file() and not path_is_sensitive(target):
+                result.append(entry)
+            continue
+        if entry.is_file() and not path_is_sensitive(entry):
+            result.append(entry)
+    return result
+
+
+
+def _plasma_desktop_launcher_references(home: Path) -> list[Path]:
+    """Resolve concrete .desktop files referenced by Plasma desktop applets.
+
+    An icon applet can point directly at a source-distro launcher under
+    /usr/share/applications.  Copying the applet configuration alone leaves a
+    broken or generic icon on another distribution.
+    """
+    config = home / ".config/plasma-org.kde.plasma.desktop-appletsrc"
+    if not config.is_file():
+        return []
+    try:
+        text = config.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    pattern = re.compile(
+        r"(?P<path>(?:file://)?(?:~|\$HOME|/)[^\n\r'\"]+?\.desktop)", re.I
+    )
+    found: list[Path] = []
+    seen: set[Path] = set()
+    for match in pattern.finditer(text):
+        resolved = _normalize_local_config_path(match.group("path"), home)
+        if resolved is None or not resolved.is_file() or resolved in seen:
+            continue
+        if path_is_sensitive(resolved):
+            continue
+        seen.add(resolved)
+        found.append(resolved)
+    return found
+
+
+def _copy_visible_desktop_launcher(
+    launcher: Path,
+    payload_home: Path,
+    home: Path,
+) -> CapturedFile | None:
+    desktop = _xdg_desktop_directory(home)
+    try:
+        relative = launcher.relative_to(home)
+    except ValueError:
+        return None
+    destination = payload_home / relative
+    source = launcher
+    if launcher.is_symlink():
+        try:
+            source = launcher.resolve(strict=True)
+        except OSError:
+            return None
+    captured = _copy_file(source, destination, home, "desktop-surface-launcher")
+    # Preserve the visible filename even when the source was a symlink into
+    # /usr/share/applications. _copy_file records the resolved source path but
+    # the destination remains the localized desktop directory.
+    return captured
 
 def _active_only_always_roots(home: Path) -> list[Path]:
     """User state retained even when inactive theme collections are pruned.
@@ -912,6 +1233,7 @@ def capture_profile(
 
     configs, data_paths, terminal_paths = existing_kde_paths(home)
     slideshow_overrides = _slideshow_initial_overrides(home)
+    runtime_wallpaper_states = _runtime_plasma_wallpaper_state(home)
     excluded: list[str] = []
     captured_configs: list[CapturedFile] = []
     captured_assets: list[CapturedFile] = []
@@ -949,6 +1271,57 @@ def capture_profile(
         for src in always_roots:
             captured_assets.extend(_copy_tree(src, payload_home, home, "desktop-asset", excluded))
         reference_roots.extend(always_roots)
+
+    # Capture the visible XDG desktop surface (Desktop/Masaüstü/etc.) without
+    # embedding arbitrary personal documents.  Application/link launchers are
+    # part of the user-visible desktop and must survive cross-distro restore.
+    desktop_surface_dir = _xdg_desktop_directory(home)
+    desktop_surface_items: list[str] = []
+    for launcher in _visible_desktop_launchers(home):
+        captured = _copy_visible_desktop_launcher(launcher, payload_home, home)
+        if captured is None:
+            continue
+        captured_assets.append(captured)
+        desktop_surface_items.append(captured.destination)
+        reference_roots.append(launcher)
+        icon_name = _launcher_icon_name(launcher)
+        if icon_name:
+            for icon_src, target_relative in _named_launcher_icon_files(home, icon_name):
+                icon_dst = payload_home / target_relative
+                if not icon_dst.exists():
+                    captured_assets.append(
+                        _copy_file(icon_src, icon_dst, home, "desktop-surface-icon")
+                    )
+
+    desktop_applet_launchers: list[str] = []
+    desktop_reference_replacements: dict[str, str] = {}
+    for launcher in _plasma_desktop_launcher_references(home):
+        try:
+            relative = launcher.resolve().relative_to(home.resolve())
+            target_relative = relative
+        except ValueError:
+            target_relative = Path(".local/share/applications") / launcher.name
+        destination = payload_home / target_relative
+        if not destination.exists():
+            captured_assets.append(
+                _copy_file(launcher, destination, home, "desktop-applet-launcher")
+            )
+        portable = f"{{{{HOME}}}}/{target_relative.as_posix()}"
+        desktop_applet_launchers.append(portable)
+        try:
+            source_resolved = str(launcher.resolve())
+        except OSError:
+            source_resolved = str(launcher)
+        desktop_reference_replacements[source_resolved] = portable
+        reference_roots.append(launcher)
+        icon_name = _launcher_icon_name(launcher)
+        if icon_name:
+            for icon_src, icon_target_relative in _named_launcher_icon_files(home, icon_name):
+                icon_dst = payload_home / icon_target_relative
+                if not icon_dst.exists():
+                    captured_assets.append(
+                        _copy_file(icon_src, icon_dst, home, "desktop-applet-icon")
+                    )
 
     # Preserve pinned panel/task-manager launchers themselves.  Without the
     # corresponding .desktop files Plasma renders generic document icons even
@@ -1145,12 +1518,13 @@ def capture_profile(
         )
     )
     referenced.update(_wallpaper_config_references(home))
+    referenced.update(_runtime_wallpaper_files(home, runtime_wallpaper_states))
     relocated_wallpapers = _relocated_wallpaper_references(home)
     referenced.update(found for _missing, found in relocated_wallpapers)
     promoted_roots: set[Path] = set()
     copied_directories: set[Path] = set()
     home_resolved = home.resolve()
-    replacements: dict[str, str] = {}
+    replacements: dict[str, str] = dict(desktop_reference_replacements)
     for missing, found in relocated_wallpapers:
         target = f"{{{{HOME}}}}/{found.relative_to(home_resolved).as_posix()}"
         replacements[str(missing)] = target
@@ -1225,6 +1599,9 @@ def capture_profile(
         captured_configs + captured_assets, payload_home, replacements
     )
     _apply_slideshow_initial_overrides(payload_home, slideshow_overrides, captured_configs)
+    _apply_runtime_wallpaper_state(
+        payload_home, home, runtime_wallpaper_states, replacements, captured_configs
+    )
     packages.sort(key=lambda p: (p.category, p.provider, p.name.lower()))
     desktop = DesktopProfile(
         desktop=desktop_name,
@@ -1262,7 +1639,13 @@ def capture_profile(
             "application_install_mode": "online-selective",
             "profile_version": __version__,
             "asset_mode": asset_mode,
-            "fidelity_schema": 6,
+            "fidelity_schema": 7,
+            "desktop_surface": {
+                "directory": _portable_home_path(desktop_surface_dir, home),
+                "launchers": sorted(desktop_surface_items),
+                "launcher_count": len(desktop_surface_items),
+                "applet_launchers": sorted(set(desktop_applet_launchers)),
+            },
         },
     )
 

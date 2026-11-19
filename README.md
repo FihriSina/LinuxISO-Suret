@@ -4,7 +4,17 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.3.28
+## Current milestone: v0.3.29
+
+### v0.3.29: desktop-surface capture + sharp installer icons + live wallpaper truth
+
+- Captures the localized XDG desktop surface (`Desktop`, `Masaüstü`, etc.) as UI state, including visible launcher/link files but not arbitrary personal documents.
+- Captures `.desktop` launchers referenced by Plasma icon applets even when they live under source-distro system paths, then rewrites those references to portable user-local copies.
+- Preserves `user-dirs.dirs` / locale metadata so restored desktop items appear in the correct localized directory.
+- Verifies visible desktop launchers before ISO staging, reducing QEMU-only discovery of missing desktop icons.
+- Installer application cards select the highest-quality captured icon (SVG/SVGZ first, then largest PNG) and render icons at a controlled size with mipmapping rather than stretching tiny raster icons across the card.
+- When a live Plasma session is available, the scanner queries the supported Plasma scripting API through D-Bus and records the wallpaper actually shown on screen, overriding stale persisted `Next`/vendor wallpaper values.
+- Adds fidelity schema v7; re-scan the source desktop before building.
 
 ### v0.3.28: source-native installer branding + visual application cards
 

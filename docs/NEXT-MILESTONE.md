@@ -1,12 +1,12 @@
-# Next milestone - v0.3.28 source-native installer + full fidelity validation
+# Next milestone - v0.3.29 full desktop-surface acceptance
 
-Re-scan the Pardus source with fidelity schema v6, build and install the ISO, then validate:
+Re-scan the Pardus source with fidelity schema v7, build/install once, then validate the complete user-visible surface rather than isolated components:
 
-- live desktop wallpaper, panel, icons, themes and Kickoff favorites against the source
-- installer product name/logo/colors contain no visible Kubuntu branding for a Pardus profile
-- installation slideshow uses source imagery
-- every optional application card starts checked and can be unchecked independently
-- captured app icons render when available and fallback covers render otherwise
-- installed QCOW2 still boots without ISO and retains the source desktop state
+- source-visible wallpaper is reproduced from live Plasma state, not a stale distro default
+- localized desktop launchers such as `Bilgisayar` appear in the same desktop surface
+- panel/dock geometry, widgets, task pins, Kickoff favorites/order, avatar, themes, cursor, fonts and window decoration match
+- optional application cards start checked and use crisp scalable/high-resolution icons where available
+- source-distro installer branding remains visible and Kubuntu branding does not leak into the Pardus profile
+- installed QCOW2 boots without the ISO and keeps the captured desktop surface
 
-The technical build base remains Ubuntu/Kubuntu 26.04 for the current recipe. A genuinely native Fedora Anaconda or distro-specific package base is a separate future recipe/installer-engine milestone, not a branding substitution.
+The current technical image base remains Ubuntu/Kubuntu 26.04. Native per-distro package bases/installer engines remain a separate recipe milestone.

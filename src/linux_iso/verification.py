@@ -34,6 +34,7 @@ class VerificationResult:
             f"- Appearance components: {self.stats.get('components', 0)}",
             f"- Referenced widgets: {self.stats.get('widgets', 0)}",
             f"- Required appearance packages: {self.stats.get('required_packages', 0)}",
+            f"- Visible desktop launchers: {self.stats.get('desktop_launchers', 0)}",
         ]
         lines.extend(["", "Warnings", "--------"])
         if self.warnings:
@@ -83,10 +84,10 @@ def verify_profile(profile: Path) -> VerificationResult:
         fidelity_schema = int(restore.get("fidelity_schema", 0) or 0)
     except (TypeError, ValueError):
         fidelity_schema = 0
-    if fidelity_schema < 6:
+    if fidelity_schema < 7:
         warnings.append(
-            "Profile predates source-native fidelity capture v6; re-run 'linux-iso scan' before the next ISO build "
-            "to preserve source distro branding, Kickoff favorites/order, avatar, visible KDE state, and wallpaper fidelity."
+            "Profile predates desktop-surface fidelity capture v7; re-run 'linux-iso scan' before the next ISO build "
+            "to preserve source distro branding, Kickoff favorites/order, avatar, visible desktop launchers, and wallpaper fidelity."
         )
     stats: dict[str, int | str] = {
         "asset_mode": restore.get("asset_mode", "legacy/all"),
@@ -195,6 +196,47 @@ def verify_profile(profile: Path) -> VerificationResult:
             package = package_index.get(key)
             if package is None or not package.get("required_for_appearance"):
                 errors.append(f"Widget package is not marked required: {key[0]}:{key[1]} for {label}")
+
+    if fidelity_schema >= 7:
+        surface = restore.get("desktop_surface", {})
+        if not isinstance(surface, dict):
+            errors.append("Desktop-surface fidelity metadata is missing or invalid.")
+        else:
+            launchers = surface.get("launchers", [])
+            if not isinstance(launchers, list):
+                errors.append("Desktop-surface launcher list is invalid.")
+                launchers = []
+            expected_count = surface.get("launcher_count", len(launchers))
+            try:
+                expected_count = int(expected_count)
+            except (TypeError, ValueError):
+                errors.append("Desktop-surface launcher count is invalid.")
+                expected_count = len(launchers)
+            if expected_count != len(launchers):
+                errors.append(
+                    f"Desktop-surface launcher count mismatch: metadata={expected_count}, list={len(launchers)}"
+                )
+            for destination in launchers:
+                destination = str(destination)
+                if destination not in destinations:
+                    errors.append(f"Visible desktop launcher is missing from manifest: {destination}")
+                    continue
+                launcher_path = _payload_path(profile, destination, placeholder)
+                if launcher_path is None or not launcher_path.is_file():
+                    errors.append(f"Visible desktop launcher has no payload file: {destination}")
+            applet_launchers = surface.get("applet_launchers", [])
+            if not isinstance(applet_launchers, list):
+                errors.append("Desktop-applet launcher list is invalid.")
+                applet_launchers = []
+            for destination in applet_launchers:
+                destination = str(destination)
+                if destination not in destinations:
+                    errors.append(f"Desktop applet launcher is missing from manifest: {destination}")
+                    continue
+                launcher_path = _payload_path(profile, destination, placeholder)
+                if launcher_path is None or not launcher_path.is_file():
+                    errors.append(f"Desktop applet launcher has no payload file: {destination}")
+            stats["desktop_launchers"] = len(launchers) + len(applet_launchers)
 
     # Strict-fidelity v3 must not silently leave wallpaper references pointing
     # back to paths that are absent from the portable payload.  Plasma otherwise
