@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 import yaml
 
@@ -82,10 +83,10 @@ def verify_profile(profile: Path) -> VerificationResult:
         fidelity_schema = int(restore.get("fidelity_schema", 0) or 0)
     except (TypeError, ValueError):
         fidelity_schema = 0
-    if fidelity_schema < 2:
+    if fidelity_schema < 3:
         warnings.append(
-            "Profile predates strict-fidelity capture v2; re-run 'linux-iso scan' before the next ISO build "
-            "to bundle external wallpapers and exact active appearance components."
+            "Profile predates strict-fidelity capture v3; re-run 'linux-iso scan' before the next ISO build "
+            "to bundle pinned launchers plus file/directory wallpaper references."
         )
     stats: dict[str, int | str] = {
         "asset_mode": restore.get("asset_mode", "legacy/all"),
@@ -194,6 +195,40 @@ def verify_profile(profile: Path) -> VerificationResult:
             package = package_index.get(key)
             if package is None or not package.get("required_for_appearance"):
                 errors.append(f"Widget package is not marked required: {key[0]}:{key[1]} for {label}")
+
+    # Strict-fidelity v3 must not silently leave wallpaper references pointing
+    # back to paths that are absent from the portable payload.  Plasma otherwise
+    # falls back to the target distribution wallpaper, which looks like a
+    # successful restore even though visual fidelity was lost.
+    plasma_config = payload_root / ".config/plasma-org.kde.plasma.desktop-appletsrc"
+    if fidelity_schema >= 3:
+        if not plasma_config.is_file():
+            warnings.append("Strict-fidelity profile has no Plasma desktop/panel configuration to validate.")
+        else:
+            try:
+                plasma_text = plasma_config.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                plasma_text = ""
+            for line in plasma_text.splitlines():
+                if "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                if key.strip() not in {"Image", "SlidePaths"}:
+                    continue
+                values = [value] if key.strip() == "Image" else value.replace(";", ",").split(",")
+                for raw in values:
+                    decoded = unquote(raw.strip())
+                    if decoded.startswith("file://"):
+                        decoded = decoded[7:]
+                    prefix = placeholder + "/"
+                    if decoded.startswith(prefix):
+                        candidate = payload_root / decoded[len(prefix):]
+                        if not candidate.exists():
+                            errors.append(f"Wallpaper reference has no payload asset: {decoded}")
+                    elif decoded.startswith("/"):
+                        errors.append(
+                            f"Strict-fidelity wallpaper reference was not made portable: {decoded}"
+                        )
 
     # Report payload files that exist but are not described by the manifest. They
     # are not fatal, but reproducibility is weaker because checksums are missing.

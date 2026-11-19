@@ -1,10 +1,10 @@
-# Next milestone - v0.3.24 installed-desktop fidelity validation
+# Next milestone - v0.3.25 installed-desktop fidelity validation
 
 ## Highest priority: prove visual fidelity
 
 The ISO build, UEFI live boot, Calamares installation and ISO-less installed-system boot are now proven.
 
-1. Re-capture the Pardus KDE desktop with fidelity schema v2.
+1. Re-capture the Pardus KDE desktop with fidelity schema v3.
 2. Verify/audit the new profile and rebuild the ISO.
 3. Install to a clean QCOW2 disk and boot without the ISO.
 4. Compare source vs installed wallpaper, panel/dock, icon/cursor/theme, fonts, KWin, Dolphin, Konsole and custom assets.

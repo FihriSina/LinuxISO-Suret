@@ -243,6 +243,11 @@ def patch_settings() -> None:
             "config": "linuxiso_automirror_compat.conf",
         },
         {
+            "id": "linuxiso_apply_target_profile",
+            "module": "shellprocess",
+            "config": "linuxiso_apply_target_profile.conf",
+        },
+        {
             "id": "linuxiso_target_finalize",
             "module": "shellprocess",
             "config": "linuxiso_target_finalize.conf",
@@ -260,6 +265,9 @@ def patch_settings() -> None:
     def is_pkgselect_show(item):
         return isinstance(item, str) and (item == "pkgselect" or item.startswith("pkgselect@"))
 
+    def is_users_exec(item):
+        return isinstance(item, str) and (item == "users" or item.startswith("users@"))
+
     def is_ubuntu_live_only_exec(item):
         if not isinstance(item, str):
             return False
@@ -272,7 +280,11 @@ def patch_settings() -> None:
             or item.startswith("contextualprocess@pkgselect")
         )
 
+    profile_job = "shellprocess@linuxiso_apply_target_profile"
+    install_job = "linuxiso-install"
     finalizer = "shellprocess@linuxiso_target_finalize"
+    profile_inserted = False
+    install_inserted = False
     finalizer_inserted = False
     last_exec_phase = None
     for phase in settings.get("sequence", []):
@@ -301,8 +313,46 @@ def patch_settings() -> None:
                 item = finalizer
             if item == "contextualprocess@before_bootloader":
                 continue
+
+            # Always apply the captured desktop after Calamares has created the
+            # real user, independently of the optional application installer.
+            if item == install_job and profile_job not in patched:
+                patched.append(profile_job)
+                profile_inserted = True
             if item not in patched:
                 patched.append(item)
+            if is_users_exec(item):
+                if profile_job not in patched:
+                    patched.append(profile_job)
+                profile_inserted = True
+                if install_job not in patched:
+                    patched.append(install_job)
+                install_inserted = True
+            elif item == install_job:
+                install_inserted = True
+
+        # Some flavor configurations rename/instance the users module.  If no
+        # direct anchor was found, place profile+app jobs before display-manager
+        # or other late target jobs rather than silently skipping fidelity.
+        if not profile_inserted:
+            anchors = [
+                i for i, value in enumerate(patched)
+                if isinstance(value, str) and (
+                    value == "displaymanager"
+                    or value.startswith("displaymanager@")
+                    or value == "networkcfg"
+                    or value.startswith("networkcfg@")
+                    or value == finalizer
+                    or value == "umount"
+                )
+            ]
+            if anchors:
+                pos = anchors[0]
+                patched.insert(pos, profile_job)
+                if install_job not in patched:
+                    patched.insert(pos + 1, install_job)
+                profile_inserted = True
+                install_inserted = True
 
         if finalizer in patched:
             finalizer_inserted = True
@@ -311,8 +361,15 @@ def patch_settings() -> None:
             finalizer_inserted = True
         phase["exec"] = patched
 
-    if not finalizer_inserted and last_exec_phase is not None:
-        last_exec_phase["exec"].append(finalizer)
+    if last_exec_phase is not None:
+        if not profile_inserted:
+            last_exec_phase["exec"].append(profile_job)
+            profile_inserted = True
+        if not install_inserted:
+            last_exec_phase["exec"].append(install_job)
+            install_inserted = True
+        if not finalizer_inserted:
+            last_exec_phase["exec"].append(finalizer)
 
     SETTINGS.write_text(
         yaml.safe_dump(settings, sort_keys=False, allow_unicode=True),
@@ -357,6 +414,16 @@ def main() -> None:
     }
     (MODULES / "linuxiso_automirror_compat.conf").write_text(
         yaml.safe_dump(automirror_compat, sort_keys=False),
+        encoding="utf-8",
+    )
+    apply_target_profile = {
+        "dontChroot": True,
+        "timeout": 120,
+        "verbose": True,
+        "script": ["python3 /usr/lib/linux-iso/apply-target-profile.py ${ROOT}"],
+    }
+    (MODULES / "linuxiso_apply_target_profile.conf").write_text(
+        yaml.safe_dump(apply_target_profile, sort_keys=False),
         encoding="utf-8",
     )
     target_finalize = {
@@ -415,6 +482,21 @@ def main() -> None:
                 risky.append(item)
     if risky:
         raise SystemExit("unsafe Ubuntu live-ISO Calamares jobs remain: " + ", ".join(risky))
+
+    exec_jobs = [
+        item
+        for phase in settings.get("sequence", [])
+        if isinstance(phase, dict)
+        for item in phase.get("exec", [])
+        if isinstance(item, str)
+    ]
+    profile_job = "shellprocess@linuxiso_apply_target_profile"
+    if profile_job not in exec_jobs:
+        raise SystemExit("Linux ISO target-profile job is missing from Calamares exec sequence")
+    if "linuxiso-install" not in exec_jobs:
+        raise SystemExit("Linux ISO application/install job is missing from Calamares exec sequence")
+    if exec_jobs.index(profile_job) > exec_jobs.index("linuxiso-install"):
+        raise SystemExit("Linux ISO target-profile job must run before linuxiso-install")
 
 
 if __name__ == "__main__":
@@ -521,6 +603,169 @@ def main():
 if __name__ == "__main__":
     main()
 '''
+
+
+TARGET_PROFILE_SCRIPT = r"""#!/usr/bin/env python3
+from __future__ import annotations
+
+import os
+import shutil
+import sys
+from pathlib import Path
+from urllib.parse import unquote, urlparse
+
+PAYLOAD = Path("/usr/share/linux-iso/profile/payload/home")
+PERSONALIZATION_PATHS = (
+    "Desktop",
+    ".config/kdeglobals",
+    ".config/kwinrc",
+    ".config/plasmashellrc",
+    ".config/plasmarc",
+    ".config/plasma-org.kde.plasma.desktop-appletsrc",
+    ".config/kglobalshortcutsrc",
+    ".config/kcminputrc",
+    ".config/kscreenlockerrc",
+    ".config/ksplashrc",
+    ".config/breezerc",
+    ".config/dolphinrc",
+    ".config/konsolerc",
+    ".config/mimeapps.list",
+    ".config/gtk-3.0",
+    ".config/gtk-4.0",
+    ".config/qt5ct",
+    ".config/qt6ct",
+    ".config/Kvantum",
+    ".local/share/plasma",
+    ".local/share/aurorae",
+    ".local/share/kwin",
+    ".local/share/color-schemes",
+    ".local/share/icons",
+    ".icons",
+    ".local/share/themes",
+    ".themes",
+    ".local/share/fonts",
+    ".fonts",
+    ".local/share/konsole",
+    ".local/share/applications",
+)
+
+
+def target_user(root: Path) -> tuple[str, int, int, Path]:
+    passwd = root / "etc/passwd"
+    if not passwd.is_file():
+        raise RuntimeError("target /etc/passwd is missing")
+    candidates = []
+    for line in passwd.read_text(encoding="utf-8", errors="replace").splitlines():
+        fields = line.split(":")
+        if len(fields) < 7:
+            continue
+        name, uid_raw, gid_raw, home_raw = fields[0], fields[2], fields[3], fields[5]
+        try:
+            uid, gid = int(uid_raw), int(gid_raw)
+        except ValueError:
+            continue
+        if name in {"live", "nobody"} or not (1000 <= uid < 65534):
+            continue
+        if not home_raw.startswith("/home/"):
+            continue
+        home = root / home_raw.lstrip("/")
+        candidates.append((uid, name, gid, home))
+    if not candidates:
+        raise RuntimeError("could not identify the Calamares-created target user")
+    uid, name, gid, home = sorted(candidates)[0]
+    return name, uid, gid, home
+
+
+def clear_vendor_personalization(home: Path) -> None:
+    for relative in PERSONALIZATION_PATHS:
+        path = home / relative
+        if path.is_symlink() or path.is_file():
+            path.unlink(missing_ok=True)
+        elif path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+
+
+def normalize_local(value: str) -> str | None:
+    value = unquote(value.strip())
+    if value.startswith("file://"):
+        parsed = urlparse(value)
+        if parsed.scheme != "file":
+            return None
+        return unquote(parsed.path)
+    if value.startswith("/"):
+        return value
+    return None
+
+
+def validate_wallpaper(home: Path) -> int:
+    config = home / ".config/plasma-org.kde.plasma.desktop-appletsrc"
+    if not config.is_file():
+        raise RuntimeError("restored Plasma desktop configuration is missing")
+    checked = 0
+    text = config.read_text(encoding="utf-8", errors="replace")
+    for line in text.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() not in {"Image", "SlidePaths"}:
+            continue
+        values = [value] if key.strip() == "Image" else value.replace(";", ",").split(",")
+        for raw in values:
+            local = normalize_local(raw)
+            if not local or not local.startswith(str(home) + "/"):
+                continue
+            checked += 1
+            if not Path(local).exists():
+                raise RuntimeError(f"restored wallpaper asset is missing: {local}")
+    return checked
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        raise SystemExit("usage: apply-target-profile ROOT")
+    root = Path(sys.argv[1]).resolve()
+    if not PAYLOAD.is_dir():
+        raise RuntimeError("Linux ISO profile payload is missing in live media")
+    username, uid, gid, home = target_user(root)
+    home.mkdir(parents=True, exist_ok=True)
+    clear_vendor_personalization(home)
+
+    copied = 0
+    for src in PAYLOAD.rglob("*"):
+        rel = src.relative_to(PAYLOAD)
+        dst = home / rel
+        if src.is_dir():
+            dst.mkdir(parents=True, exist_ok=True)
+            os.chown(dst, uid, gid)
+            continue
+        if not src.is_file():
+            continue
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            text = src.read_text(encoding="utf-8", errors="strict")
+        except (UnicodeDecodeError, OSError):
+            shutil.copy2(src, dst)
+        else:
+            dst.write_text(text.replace("{{HOME}}", str(home)), encoding="utf-8")
+            shutil.copymode(src, dst)
+        os.chown(dst, uid, gid)
+        copied += 1
+
+    os.chown(home, uid, gid)
+    wallpaper_checks = validate_wallpaper(home)
+    state = root / "var/lib/linux-iso"
+    state.mkdir(parents=True, exist_ok=True)
+    (state / "target-username").write_text(username + "\n", encoding="utf-8")
+    (state / "profile-applied").write_text(
+        f"user={username}\nfiles={copied}\nwallpaper_refs={wallpaper_checks}\n",
+        encoding="utf-8",
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+"""
 
 
 def _read_manifest(profile: Path) -> dict[str, Any]:
@@ -662,6 +907,10 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
     live_profile.write_text(LIVE_PROFILE_SCRIPT, encoding="utf-8")
     live_profile.chmod(0o755)
 
+    target_profile = destination / "root/usr/lib/linux-iso/apply-target-profile.py"
+    target_profile.write_text(TARGET_PROFILE_SCRIPT, encoding="utf-8")
+    target_profile.chmod(0o755)
+
     media_helper = destination / "root/usr/lib/linux-iso/prepare-calamares-media"
     media_helper.write_text(
         "#!/bin/sh\n"
@@ -771,6 +1020,7 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         "rm -f /usr/lib/linux-iso/prepare-calamares-media\n"
         "rm -f /usr/lib/linux-iso/patch-calamares.py /usr/lib/linux-iso/patch-calamares-runtime.py\n"
         "rm -f /usr/lib/linux-iso/update-target-initramfs /usr/lib/linux-iso/finalize-target\n"
+        "rm -f /usr/lib/linux-iso/apply-target-profile.py /usr/lib/linux-iso/apply-live-profile.py\n"
         "exit 0\n",
         encoding="utf-8",
     )
@@ -963,8 +1213,11 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         "set -Eeuo pipefail\n"
         "HERE=$(CDPATH= cd -- \"$(dirname -- \"$0\")\" && pwd)\n"
         "RESULT=${1:-${LINUX_ISO_RESULT_DIR:-${HERE}-result}}\n"
-        "ISO=$(find \"$RESULT\" -maxdepth 2 -type f -name '*.iso' -print | sort | tail -n 1)\n"
-        "if [ -z \"${ISO:-}\" ]; then echo \"No ISO found under $RESULT\" >&2; exit 2; fi\n"
+        "MODE=${2:-${LINUX_ISO_QEMU_MODE:-live}}\n"
+        "ISO=''\n"
+        "if [ \"$MODE\" = live ]; then ISO=$(find \"$RESULT\" -maxdepth 2 -type f -name '*.iso' -print | sort | tail -n 1); fi\n"
+        "if [ \"$MODE\" = live ] && [ -z \"${ISO:-}\" ]; then echo \"No ISO found under $RESULT\" >&2; exit 2; fi\n"
+        "if [ \"$MODE\" != live ] && [ \"$MODE\" != installed ]; then echo 'Mode must be live or installed' >&2; exit 2; fi\n"
         "QEMU=$(command -v qemu-system-x86_64 || command -v qemu-kvm || true)\n"
         "if [ -z \"$QEMU\" ]; then echo 'qemu-system-x86_64 not found' >&2; exit 2; fi\n"
         "ACCEL=(-accel tcg,thread=single -cpu max,la57=off)\n"
@@ -974,11 +1227,13 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         "DISK_SIZE=${LINUX_ISO_QEMU_DISK_SIZE:-40G}\n"
         "QEMU_IMG=$(command -v qemu-img || true)\n"
         "if [ ! -f \"$DISK\" ]; then\n"
+        "  if [ \"$MODE\" = installed ]; then echo \"Installed-system disk not found: $DISK\" >&2; exit 4; fi\n"
         "  if [ -z \"$QEMU_IMG\" ]; then echo 'qemu-img not found; cannot create installer test disk' >&2; exit 4; fi\n"
         "  mkdir -p \"$(dirname -- \"$DISK\")\"\n"
         "  \"$QEMU_IMG\" create -f qcow2 \"$DISK\" \"$DISK_SIZE\"\n"
         "fi\n"
-        "ARGS=(-machine q35 \"${ACCEL[@]}\" -m \"${LINUX_ISO_QEMU_MEMORY:-4096}\" -smp \"${LINUX_ISO_QEMU_CPUS:-2}\" -boot d -cdrom \"$ISO\" -drive \"file=$DISK,format=qcow2,if=virtio\" -netdev user,id=net0 -device virtio-net-pci,netdev=net0 -vga std -display gtk,gl=off -no-reboot)\n"
+        "ARGS=(-machine q35 \"${ACCEL[@]}\" -m \"${LINUX_ISO_QEMU_MEMORY:-4096}\" -smp \"${LINUX_ISO_QEMU_CPUS:-2}\" -drive \"file=$DISK,format=qcow2,if=virtio\" -netdev user,id=net0 -device virtio-net-pci,netdev=net0 -vga std -display gtk,gl=off)\n"
+        "if [ \"$MODE\" = live ]; then ARGS+=(-boot d -cdrom \"$ISO\" -no-reboot); else ARGS+=(-boot c); fi\n"
         "if [ \"$FIRMWARE\" = uefi ]; then\n"
         "  CODE=\"\"; VARS=\"\"\n"
         "  for f in /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd /usr/share/ovmf/OVMF.fd; do [ -f \"$f\" ] && CODE=\"$f\" && break; done\n"
@@ -991,7 +1246,7 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         "elif [ \"$FIRMWARE\" != bios ]; then\n"
         "  echo \"Unknown LINUX_ISO_QEMU_FIRMWARE: $FIRMWARE (use uefi or bios)\" >&2; exit 2\n"
         "fi\n"
-        "echo \"Booting ($FIRMWARE): $ISO\"\n"
+        "if [ \"$MODE\" = live ]; then echo \"Booting live ISO ($FIRMWARE): $ISO\"; else echo \"Booting installed system ($FIRMWARE): $DISK\"; fi\n"
         "\"$QEMU\" \"${ARGS[@]}\"\n",
         encoding="utf-8",
     )

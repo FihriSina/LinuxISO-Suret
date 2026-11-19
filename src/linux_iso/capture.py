@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlparse
 
 import yaml
 
@@ -21,6 +22,7 @@ from linux_iso.desktop.kde import (
     plasmoid_runtime_details,
     ownership_probe,
     icon_theme_inheritance_chain,
+    referenced_application_desktops,
     referenced_widgets,
     system_plasmoid,
     user_plasmoids,
@@ -273,7 +275,7 @@ def _promoted_reference_root(src: Path, home: Path) -> tuple[Path, Path] | None:
             rel = src.resolve().relative_to(root.resolve())
         except (OSError, ValueError):
             continue
-        if len(rel.parts) >= 2:
+        if len(rel.parts) >= 1:
             candidate = root / rel.parts[0]
             if candidate.is_dir():
                 return candidate, target_root / rel.parts[0]
@@ -284,6 +286,138 @@ def _external_asset_target(src: Path) -> Path:
     digest = sha256_file(src)[:12]
     safe_name = src.name.replace("/", "_")
     return Path(".local/share/linux-iso/captured-assets") / f"{digest}-{safe_name}"
+
+
+def _external_directory_target(src: Path) -> Path:
+    digest = hashlib.sha256(str(src.resolve()).encode("utf-8")).hexdigest()[:12]
+    safe_name = src.name.replace("/", "_") or "wallpaper"
+    return Path(".local/share/linux-iso/captured-wallpapers") / f"{digest}-{safe_name}"
+
+
+def _normalize_local_config_path(raw: str, home: Path) -> Path | None:
+    raw = raw.strip().strip('"').strip("'")
+    if not raw or raw.startswith(("http://", "https://")):
+        return None
+    if raw.startswith("file://"):
+        parsed = urlparse(raw)
+        if parsed.scheme != "file":
+            return None
+        raw = unquote(parsed.path)
+    else:
+        raw = unquote(raw)
+    if raw.startswith("$HOME/"):
+        raw = str(home / raw[len("$HOME/") :])
+    elif raw.startswith("~/"):
+        raw = str(home / raw[2:])
+    candidate = Path(raw).expanduser()
+    try:
+        resolved = candidate.resolve()
+    except OSError:
+        return None
+    return resolved if resolved.exists() else None
+
+
+def _launcher_icon_name(path: Path) -> str | None:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if line.startswith("Icon="):
+            value = line.split("=", 1)[1].strip()
+            return value or None
+    return None
+
+
+def _named_launcher_icon_files(home: Path, icon_name: str) -> list[tuple[Path, Path]]:
+    """Resolve named application icons commonly shipped in hicolor/pixmaps.
+
+    Pinned launchers frequently use ``Icon=code`` rather than an absolute path.
+    The source application may not be installed yet on the target, so copy the
+    concrete icon bytes alongside the launcher to avoid generic placeholder icons.
+    """
+    if not icon_name or "/" in icon_name:
+        return []
+    stem = Path(icon_name).stem if Path(icon_name).suffix else icon_name
+    extensions = {".png", ".svg", ".svgz", ".xpm"}
+    result: list[tuple[Path, Path]] = []
+    seen: set[Path] = set()
+
+    hicolor_roots = [
+        home / ".local/share/icons/hicolor",
+        home / ".icons/hicolor",
+        Path("/usr/local/share/icons/hicolor"),
+        Path("/usr/share/icons/hicolor"),
+    ]
+    for root in hicolor_roots:
+        if not root.is_dir():
+            continue
+        try:
+            candidates = root.rglob(stem + ".*")
+        except OSError:
+            continue
+        for candidate in candidates:
+            if not candidate.is_file() or candidate.suffix.lower() not in extensions:
+                continue
+            resolved = candidate.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            try:
+                rel = candidate.relative_to(root)
+            except ValueError:
+                continue
+            result.append((candidate, Path(".local/share/icons/hicolor") / rel))
+
+    for root in (Path("/usr/local/share/pixmaps"), Path("/usr/share/pixmaps")):
+        if not root.is_dir():
+            continue
+        for ext in extensions:
+            candidate = root / f"{stem}{ext}"
+            if not candidate.is_file() or candidate.resolve() in seen:
+                continue
+            seen.add(candidate.resolve())
+            target_dir = (
+                Path(".local/share/icons/hicolor/scalable/apps")
+                if ext in {".svg", ".svgz"}
+                else Path(".local/share/icons/hicolor/256x256/apps")
+            )
+            result.append((candidate, target_dir / candidate.name))
+    return result
+
+
+def _wallpaper_config_references(home: Path) -> list[Path]:
+    """Return local wallpaper files/directories named by Plasma config.
+
+    Plasma can store either a concrete ``Image=`` file or slideshow/package
+    directories (notably ``SlidePaths=``).  The generic asset scanner only sees
+    paths with image extensions, so directory references need explicit capture.
+    """
+    path = home / ".config/plasma-org.kde.plasma.desktop-appletsrc"
+    if not path.is_file():
+        return []
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+
+    found: list[Path] = []
+    seen: set[Path] = set()
+    for line in text.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip() not in {"Image", "SlidePaths"}:
+            continue
+        # KDE config lists may use commas or semicolons; Image itself is scalar.
+        raw_values = [value] if key.strip() == "Image" else value.replace(";", ",").split(",")
+        for raw in raw_values:
+            resolved = _normalize_local_config_path(raw, home)
+            if resolved is None or resolved in seen:
+                continue
+            seen.add(resolved)
+            found.append(resolved)
+    return found
 
 
 def _payload_path_for_destination(payload_home: Path, destination: str) -> Path | None:
@@ -410,6 +544,33 @@ def capture_profile(
         for src in always_roots:
             captured_assets.extend(_copy_tree(src, payload_home, home, "desktop-asset", excluded))
         reference_roots.extend(always_roots)
+
+    # Preserve pinned panel/task-manager launchers themselves.  Without the
+    # corresponding .desktop files Plasma renders generic document icons even
+    # when the panel layout was restored correctly.
+    for launcher in referenced_application_desktops(home):
+        try:
+            relative = launcher.resolve().relative_to(home.resolve())
+        except ValueError:
+            destination = payload_home / ".local/share/applications" / launcher.name
+            if not destination.exists():
+                captured_assets.append(
+                    _copy_file(launcher, destination, home, "panel-launcher")
+                )
+        else:
+            destination = payload_home / relative
+            if not destination.exists():
+                captured_assets.append(_copy_file(launcher, destination, home, "panel-launcher"))
+        reference_roots.append(launcher)
+
+        icon_name = _launcher_icon_name(launcher)
+        if icon_name:
+            for icon_src, target_relative in _named_launcher_icon_files(home, icon_name):
+                icon_dst = payload_home / target_relative
+                if not icon_dst.exists():
+                    captured_assets.append(
+                        _copy_file(icon_src, icon_dst, home, "panel-launcher-icon")
+                    )
 
     packages = collect_packages()
     package_index = {(p.provider, p.name): p for p in packages}
@@ -573,13 +734,17 @@ def capture_profile(
     # active appearance packages, launchers and terminal configuration. Capture
     # external/system paths too, then rewrite their references to portable user-
     # local destinations so Pardus assets cannot silently fall back to Kubuntu.
-    referenced = find_referenced_assets(
-        _reference_files(reference_roots), home, include_external=True
+    referenced = set(
+        find_referenced_assets(
+            _reference_files(reference_roots), home, include_external=True
+        )
     )
+    referenced.update(_wallpaper_config_references(home))
     promoted_roots: set[Path] = set()
+    copied_directories: set[Path] = set()
     replacements: dict[str, str] = {}
     home_resolved = home.resolve()
-    for src in referenced:
+    for src in sorted(referenced, key=lambda item: str(item)):
         if path_is_sensitive(src):
             continue
         promoted = _promoted_reference_root(src, home)
@@ -602,6 +767,26 @@ def capture_profile(
                 replacements[str(promoted_src.resolve())] = (
                     f"{{{{HOME}}}}/{target_relative.as_posix()}"
                 )
+            continue
+
+        if src.is_dir():
+            try:
+                relative = src.resolve().relative_to(home_resolved)
+                target_relative = relative
+            except ValueError:
+                target_relative = _external_directory_target(src)
+            if src.resolve() not in copied_directories:
+                copied_directories.add(src.resolve())
+                captured_assets.extend(
+                    _copy_external_tree(
+                        src,
+                        payload_home / target_relative,
+                        home,
+                        "referenced-wallpaper-directory",
+                        excluded,
+                    )
+                )
+            replacements[str(src.resolve())] = f"{{{{HOME}}}}/{target_relative.as_posix()}"
             continue
 
         try:
@@ -659,7 +844,7 @@ def capture_profile(
             "application_install_mode": "online-selective",
             "profile_version": __version__,
             "asset_mode": asset_mode,
-            "fidelity_schema": 2,
+            "fidelity_schema": 3,
         },
     )
 

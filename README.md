@@ -4,7 +4,16 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.3.24
+## Current milestone: v0.3.25
+
+### v0.3.25: installed-user fidelity enforcement
+
+- Adds a mandatory Calamares target-profile shellprocess immediately after target-user creation; visual restore no longer depends on the optional application-install Python job being inserted correctly.
+- Runtime Calamares auditing now refuses to start if the target-profile job or application job is missing or ordered incorrectly.
+- Captures `.desktop` files referenced by Plasma pinned launchers so restored panels do not degrade to generic document icons on Ubuntu/Kubuntu.
+- Captures wallpaper directory references as well as individual image files and rewrites them to portable user-local paths; verification rejects unresolved absolute wallpaper paths instead of allowing a silent Kubuntu fallback.
+- Adds fidelity schema v3; re-scan the Pardus source desktop before rebuilding.
+- `test-qemu.sh RESULT installed` boots the existing QCOW2 directly without attaching the ISO.
 
 ### v0.3.24: strict desktop-fidelity capture and restore
 
@@ -12,7 +21,7 @@
 - Captures wallpapers and other referenced local assets outside the source home (including system wallpaper paths), relocates them into portable user-local storage, and rewrites configuration references.
 - Clears Kubuntu skeleton/vendor personalization from the live and installed user before applying the Suret profile, removing leftover `HOW-TO Guides`, `Kubuntu Website`, vendor panel state and similar defaults.
 - Writes profile-application markers for live/installed verification and replaces visible Calamares `Kubuntu` text with `Linux ISO - Suret`.
-- Adds fidelity schema v2 to newly captured profiles; profiles captured before this change should be re-scanned before rebuilding.
+- Adds fidelity schema v2 to newly captured profiles; v0.3.25 supersedes this with schema v3 for launcher and wallpaper-directory capture.
 - Real QEMU validation has now completed the full install chain and booted successfully from the installed QCOW2 disk; the active gate is visual fidelity.
 
 ### v0.3.23: KIWI-safe Calamares install-chain hardening
@@ -256,7 +265,7 @@ Clean base system
 
 ## Supported scope
 
-| Area | v0.3.24 |
+| Area | v0.3.25 |
 |---|---|
 | KDE Plasma capture | Yes |
 | active-only appearance capture | Yes |
@@ -283,7 +292,7 @@ Cross-family native package translation is intentionally blocked. A Pacman profi
 
 A source Plasma desktop with customized panels, third-party plasmoids, manually downloaded icons, a custom wallpaper, cursor/theme/font set, KWin additions and a styled terminal must install into a clean VM without manual desktop reconstruction. Optional applications should appear only when selected during installation.
 
-## Development environment diagnostics (v0.3.24)
+## Development environment diagnostics (v0.3.25)
 
 `uv` manages the project environment. The project explicitly enables the `dev`
 dependency group, which contains pytest.

@@ -4,6 +4,7 @@ import configparser
 import json
 import re
 from pathlib import Path
+from urllib.parse import unquote
 
 
 KDE_CONFIG_FILES = [
@@ -66,6 +67,46 @@ TERMINAL_FILES = [
 ]
 
 PLUGIN_RE = re.compile(r"^plugin\s*=\s*(.+?)\s*$", re.MULTILINE)
+LAUNCHER_ID_RE = re.compile(r"applications:([^,;\s]+?\.desktop)", re.I)
+
+
+def referenced_application_desktops(home: Path) -> list[Path]:
+    """Return .desktop files pinned in the active Plasma panel/task manager.
+
+    Plasma stores pinned application launchers as ``applications:<id>.desktop``
+    in plasma-org.kde.plasma.desktop-appletsrc.  Copying the panel config without
+    those launchers leaves generic document icons on a different distribution.
+    """
+    config = home / ".config/plasma-org.kde.plasma.desktop-appletsrc"
+    if not config.is_file():
+        return []
+    try:
+        text = config.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+
+    ids = []
+    seen_ids = set()
+    for match in LAUNCHER_ID_RE.finditer(text):
+        launcher_id = unquote(match.group(1)).strip()
+        if not launcher_id or launcher_id in seen_ids:
+            continue
+        seen_ids.add(launcher_id)
+        ids.append(launcher_id)
+
+    roots = [
+        home / ".local/share/applications",
+        Path("/usr/local/share/applications"),
+        Path("/usr/share/applications"),
+    ]
+    result = []
+    for launcher_id in ids:
+        for root in roots:
+            candidate = root / launcher_id
+            if candidate.is_file():
+                result.append(candidate)
+                break
+    return result
 
 
 QML_IMPORT_RE = re.compile(r"^\s*import\s+([A-Za-z_][A-Za-z0-9_.]*)", re.MULTILINE)

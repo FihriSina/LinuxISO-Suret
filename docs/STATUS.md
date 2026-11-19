@@ -1,5 +1,15 @@
 # Status
 
+## v0.3.25 implemented
+
+- Visual comparison proved that the Plasma panel layout was restored but wallpaper and pinned-launcher assets were incomplete.
+- A mandatory target-profile Calamares shellprocess now runs after target-user creation and is independently audited at runtime.
+- Plasma pinned `.desktop` launchers are bundled so panel icons survive the Pardus-to-Ubuntu transition.
+- Wallpaper directories and individual image references are bundled and rewritten to portable user-local paths; unresolved absolute wallpaper paths are verification errors.
+- Fidelity schema v3 forces a fresh source scan before the next ISO build.
+- The QEMU helper now supports an `installed` mode for ISO-less QCOW2 boot.
+- Full automated suite passes after these changes.
+
 ## v0.3.24 implemented
 
 - Real QEMU/Calamares installation completed successfully and the installed QCOW2 system booted without the ISO.
@@ -8,7 +18,7 @@
 - Live and target users are cleared of Kubuntu skeleton/vendor personalization before the captured profile is applied.
 - Profile-application markers make it possible to verify that the live and installed user actually received the captured payload.
 - Calamares-visible Kubuntu product text is rewritten to Linux ISO - Suret while the technical base remains Ubuntu/Kubuntu 26.04.
-- Newly captured profiles carry fidelity schema v2; a fresh scan is required to benefit from these changes.
+- v0.3.24 profiles carried fidelity schema v2; v0.3.25 schema v3 requires a fresh scan for launcher/wallpaper-directory fidelity.
 
 ## v0.3.23 implemented
 
