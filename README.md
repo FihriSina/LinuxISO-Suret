@@ -4,7 +4,18 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.3.26
+## Current milestone: v0.3.27
+
+### v0.3.27: visible desktop state + opt-out application selection
+
+- Replaces the multi-select `packagechooser` pages with one checkbox-based `netinstall` instance per application category while preserving the existing Internet / Communication / Office / Multimedia / Development / System Tools flow.
+- Every optional application starts selected; the installer user opts out by unchecking unwanted applications. Synthetic selection tokens are consumed by Suret's mixed-provider installer and are never passed to APT/Flatpak as package names.
+- Captures Kickoff favorite membership from the KActivities `ResourceLink` database and exact favorite ordering from `kactivitymanagerd-statsrc`.
+- Sanitizes the captured KActivities database so only application-favorite links and schema metadata remain; activity/resource usage history is not copied.
+- Captures the source user's avatar and additional user-visible KDE state such as KWin rules, KRunner settings, locale, power-management settings and System Settings state.
+- Captures `.desktop` launchers referenced by Kickoff favorites in addition to task-manager pins.
+- For slideshow wallpapers, uses the most recently accessed source slide as the initial restored image to avoid Plasma 6's stale persisted `Image=` value presenting the target distro wallpaper on first boot.
+- Adds fidelity schema v5; a fresh source scan is required.
 
 ### v0.3.26: moved-wallpaper reference repair
 

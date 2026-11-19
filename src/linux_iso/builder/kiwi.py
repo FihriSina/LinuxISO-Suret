@@ -160,7 +160,15 @@ def main():
         if "show" in phase and "summary" in phase["show"]:
             insert_unique(phase["show"], chooser, before="summary")
         if "exec" in phase and "users" in phase["exec"]:
-            insert_unique(phase["exec"], jobs, after="users")
+            # Preserve the fragment's declared order. Repeatedly inserting at
+            # index(users)+1 would reverse netinstall jobs and could run the
+            # mixed-provider installer before the checkbox state is published.
+            position = phase["exec"].index("users") + 1
+            for job in jobs:
+                if job in phase["exec"]:
+                    phase["exec"].remove(job)
+                phase["exec"].insert(position, job)
+                position += 1
 
     SETTINGS.write_text(
         yaml.safe_dump(settings, sort_keys=False, allow_unicode=True),
@@ -268,6 +276,9 @@ def patch_settings() -> None:
     def is_users_exec(item):
         return isinstance(item, str) and (item == "users" or item.startswith("users@"))
 
+    def is_linuxiso_selection_exec(item):
+        return isinstance(item, str) and item.startswith("netinstall@linuxiso_")
+
     def is_ubuntu_live_only_exec(item):
         if not isinstance(item, str):
             return False
@@ -297,6 +308,7 @@ def patch_settings() -> None:
         if not isinstance(phase.get("exec"), list):
             continue
         last_exec_phase = phase
+        has_selection_jobs = any(is_linuxiso_selection_exec(item) for item in phase["exec"])
         patched = []
         for item in phase["exec"]:
             if is_ubuntu_live_only_exec(item):
@@ -325,10 +337,21 @@ def patch_settings() -> None:
                 if profile_job not in patched:
                     patched.append(profile_job)
                 profile_inserted = True
-                if install_job not in patched:
+                # v0.3.27+ netinstall instances publish the checkbox state as
+                # packageOperations jobs.  Do not run linuxiso-install until
+                # those jobs have executed.
+                if not has_selection_jobs and install_job not in patched:
                     patched.append(install_job)
-                install_inserted = True
+                    install_inserted = True
             elif item == install_job:
+                install_inserted = True
+
+        if has_selection_jobs and install_job not in patched:
+            selection_positions = [
+                i for i, value in enumerate(patched) if is_linuxiso_selection_exec(value)
+            ]
+            if selection_positions:
+                patched.insert(selection_positions[-1] + 1, install_job)
                 install_inserted = True
 
         # Some flavor configurations rename/instance the users module.  If no
@@ -497,6 +520,11 @@ def main() -> None:
         raise SystemExit("Linux ISO application/install job is missing from Calamares exec sequence")
     if exec_jobs.index(profile_job) > exec_jobs.index("linuxiso-install"):
         raise SystemExit("Linux ISO target-profile job must run before linuxiso-install")
+    selection_jobs = [
+        item for item in exec_jobs if item.startswith("netinstall@linuxiso_")
+    ]
+    if selection_jobs and max(exec_jobs.index(item) for item in selection_jobs) > exec_jobs.index("linuxiso-install"):
+        raise SystemExit("Linux ISO application selection jobs must run before linuxiso-install")
 
 
 if __name__ == "__main__":
@@ -521,9 +549,18 @@ PERSONALIZATION_PATHS = (
     ".config/plasmarc",
     ".config/plasma-org.kde.plasma.desktop-appletsrc",
     ".config/kglobalshortcutsrc",
+    ".config/kwinrulesrc",
     ".config/kcminputrc",
     ".config/kscreenlockerrc",
     ".config/ksplashrc",
+    ".config/krunnerrc",
+    ".config/plasma-localerc",
+    ".config/powermanagementprofilesrc",
+    ".config/powerdevilrc",
+    ".config/systemsettingsrc",
+    ".config/kded6rc",
+    ".config/klaunchrc",
+    ".config/kactivitymanagerd-statsrc",
     ".config/breezerc",
     ".config/dolphinrc",
     ".config/konsolerc",
@@ -545,6 +582,9 @@ PERSONALIZATION_PATHS = (
     ".fonts",
     ".local/share/konsole",
     ".local/share/applications",
+    ".local/share/kactivitymanagerd",
+    ".face",
+    ".face.icon",
 )
 
 
@@ -583,8 +623,11 @@ def main():
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
         try:
-            text = src.read_text(encoding="utf-8", errors="strict")
+            raw = src.read_bytes()
+            text = None if b"\x00" in raw else raw.decode("utf-8", errors="strict")
         except (UnicodeDecodeError, OSError):
+            text = None
+        if text is None:
             shutil.copy2(src, dst)
         else:
             dst.write_text(text.replace("{{HOME}}", "/home/live"), encoding="utf-8")
@@ -623,9 +666,18 @@ PERSONALIZATION_PATHS = (
     ".config/plasmarc",
     ".config/plasma-org.kde.plasma.desktop-appletsrc",
     ".config/kglobalshortcutsrc",
+    ".config/kwinrulesrc",
     ".config/kcminputrc",
     ".config/kscreenlockerrc",
     ".config/ksplashrc",
+    ".config/krunnerrc",
+    ".config/plasma-localerc",
+    ".config/powermanagementprofilesrc",
+    ".config/powerdevilrc",
+    ".config/systemsettingsrc",
+    ".config/kded6rc",
+    ".config/klaunchrc",
+    ".config/kactivitymanagerd-statsrc",
     ".config/breezerc",
     ".config/dolphinrc",
     ".config/konsolerc",
@@ -647,6 +699,9 @@ PERSONALIZATION_PATHS = (
     ".fonts",
     ".local/share/konsole",
     ".local/share/applications",
+    ".local/share/kactivitymanagerd",
+    ".face",
+    ".face.icon",
 )
 
 
@@ -742,8 +797,11 @@ def main() -> int:
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
         try:
-            text = src.read_text(encoding="utf-8", errors="strict")
+            raw = src.read_bytes()
+            text = None if b"\x00" in raw else raw.decode("utf-8", errors="strict")
         except (UnicodeDecodeError, OSError):
+            text = None
+        if text is None:
             shutil.copy2(src, dst)
         else:
             dst.write_text(text.replace("{{HOME}}", str(home)), encoding="utf-8")

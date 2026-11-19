@@ -63,7 +63,7 @@ def test_v0325_capture_bundles_panel_launcher_and_wallpaper_directory(tmp_path: 
     profile = tmp_path / "profile"
     manifest = capture_profile(profile, home)
 
-    assert manifest.restore["fidelity_schema"] == 4
+    assert manifest.restore["fidelity_schema"] == 5
     assert (profile / "payload/home/.local/share/applications/code.desktop").is_file()
     assert (
         profile / "payload/home/.local/share/icons/hicolor/scalable/apps/visual-studio-code.svg"

@@ -1,8 +1,11 @@
-## v0.3.26 implemented
+## v0.3.27 implemented
 
-- Repairs stale Plasma wallpaper references when a referenced file was moved into a unique subdirectory under its previous parent.
-- Fidelity schema v4 requires a fresh scan.
-- Keeps ambiguous missing wallpaper references fatal instead of guessing.
+- Optional application selection is now opt-out: every visible app is selected by default in checkbox-based Calamares category pages.
+- Suret preserves Kickoff favorite membership and ordering, including favorite launcher `.desktop` files and icons where available.
+- KActivities capture is privacy-scoped: only application favorites and schema metadata are retained; usage/event/score history is stripped and the SQLite database is vacuumed.
+- Source avatar plus additional user-visible KDE configuration (KWin rules, KRunner, locale, power management and System Settings state) are captured.
+- Slideshow restore picks the most recently accessed source slide as the initial image so a stale Plasma 6 `Image=` entry does not expose the Kubuntu/KDE default wallpaper on first boot.
+- Fidelity schema v5 requires a fresh scan.
 
 # Status
 

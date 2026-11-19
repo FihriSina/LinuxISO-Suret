@@ -3,6 +3,7 @@ from __future__ import annotations
 import configparser
 import json
 import re
+import sqlite3
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -14,9 +15,17 @@ KDE_CONFIG_FILES = [
     ".config/plasmarc",
     ".config/plasma-org.kde.plasma.desktop-appletsrc",
     ".config/kglobalshortcutsrc",
+    ".config/kwinrulesrc",
     ".config/kcminputrc",
     ".config/kscreenlockerrc",
     ".config/ksplashrc",
+    ".config/krunnerrc",
+    ".config/plasma-localerc",
+    ".config/powermanagementprofilesrc",
+    ".config/powerdevilrc",
+    ".config/systemsettingsrc",
+    ".config/kded6rc",
+    ".config/klaunchrc",
     ".config/breezerc",
     ".config/dolphinrc",
     ".config/konsolerc",
@@ -26,6 +35,8 @@ KDE_CONFIG_FILES = [
     ".config/qt5ct/qt5ct.conf",
     ".config/qt6ct/qt6ct.conf",
     ".config/Kvantum/kvantum.kvconfig",
+    ".face",
+    ".face.icon",
 ]
 
 KDE_DATA_PATHS = [
@@ -68,6 +79,71 @@ TERMINAL_FILES = [
 
 PLUGIN_RE = re.compile(r"^plugin\s*=\s*(.+?)\s*$", re.MULTILINE)
 LAUNCHER_ID_RE = re.compile(r"applications:([^,;\s]+?\.desktop)", re.I)
+FAVORITES_AGENT = "org.kde.plasma.favorites.applications"
+
+
+def kickoff_favorite_resources(home: Path) -> list[str]:
+    """Return the live Kickoff application favorites in display-independent form.
+
+    Plasma stores favorite membership in the KActivities statistics SQLite
+    database while ``kactivitymanagerd-statsrc`` stores ordering.  Reading both
+    lets capture find the launcher files even when a favorite is not pinned in
+    the task manager.
+    """
+    result: list[str] = []
+    seen: set[str] = set()
+
+    db = home / ".local/share/kactivitymanagerd/resources/database"
+    if db.is_file():
+        connection = None
+        try:
+            connection = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=2)
+            rows = connection.execute(
+                "SELECT targettedResource FROM ResourceLink "
+                "WHERE initiatingAgent = ? ORDER BY rowid",
+                (FAVORITES_AGENT,),
+            )
+            for (resource,) in rows:
+                value = str(resource or "").strip()
+                if value and value not in seen:
+                    seen.add(value)
+                    result.append(value)
+        except (OSError, sqlite3.Error):
+            pass
+        finally:
+            if connection is not None:
+                connection.close()
+
+    stats = home / ".config/kactivitymanagerd-statsrc"
+    if stats.is_file():
+        try:
+            text = stats.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        current_favorites = False
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("[") and stripped.endswith("]"):
+                current_favorites = stripped[1:-1].startswith("Favorites-")
+                continue
+            if not current_favorites or not stripped.startswith("ordering="):
+                continue
+            raw = stripped.split("=", 1)[1]
+            for token in raw.split(","):
+                value = unquote(token.strip())
+                if value and value not in seen:
+                    seen.add(value)
+                    result.append(value)
+    return result
+
+
+def _desktop_id_from_resource(resource: str) -> str | None:
+    value = unquote(resource.strip())
+    if value.startswith("applications:"):
+        value = value[len("applications:") :]
+    if "://" in value or not value.lower().endswith(".desktop"):
+        return None
+    return value
 
 
 def referenced_application_desktops(home: Path) -> list[Path]:
@@ -77,18 +153,23 @@ def referenced_application_desktops(home: Path) -> list[Path]:
     in plasma-org.kde.plasma.desktop-appletsrc.  Copying the panel config without
     those launchers leaves generic document icons on a different distribution.
     """
-    config = home / ".config/plasma-org.kde.plasma.desktop-appletsrc"
-    if not config.is_file():
-        return []
-    try:
-        text = config.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-
     ids = []
     seen_ids = set()
-    for match in LAUNCHER_ID_RE.finditer(text):
-        launcher_id = unquote(match.group(1)).strip()
+    config = home / ".config/plasma-org.kde.plasma.desktop-appletsrc"
+    if config.is_file():
+        try:
+            text = config.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        for match in LAUNCHER_ID_RE.finditer(text):
+            launcher_id = unquote(match.group(1)).strip()
+            if not launcher_id or launcher_id in seen_ids:
+                continue
+            seen_ids.add(launcher_id)
+            ids.append(launcher_id)
+
+    for resource in kickoff_favorite_resources(home):
+        launcher_id = _desktop_id_from_resource(resource)
         if not launcher_id or launcher_id in seen_ids:
             continue
         seen_ids.add(launcher_id)

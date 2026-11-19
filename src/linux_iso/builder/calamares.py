@@ -31,9 +31,18 @@ PERSONALIZATION_PATHS = (
     ".config/plasmarc",
     ".config/plasma-org.kde.plasma.desktop-appletsrc",
     ".config/kglobalshortcutsrc",
+    ".config/kwinrulesrc",
     ".config/kcminputrc",
     ".config/kscreenlockerrc",
     ".config/ksplashrc",
+    ".config/krunnerrc",
+    ".config/plasma-localerc",
+    ".config/powermanagementprofilesrc",
+    ".config/powerdevilrc",
+    ".config/systemsettingsrc",
+    ".config/kded6rc",
+    ".config/klaunchrc",
+    ".config/kactivitymanagerd-statsrc",
     ".config/breezerc",
     ".config/dolphinrc",
     ".config/konsolerc",
@@ -55,11 +64,36 @@ PERSONALIZATION_PATHS = (
     ".fonts",
     ".local/share/konsole",
     ".local/share/applications",
+    ".local/share/kactivitymanagerd",
+    ".face",
+    ".face.icon",
 )
+
+NETINSTALL_TOKEN_PREFIX = "linuxiso__"
 
 
 def _selected_ids(catalog):
     selected = set()
+    # v0.3.27+ uses Calamares netinstall pages because they provide real
+    # checkboxes and support selected:true for every item.  The netinstall jobs
+    # publish packageOperations; our entries are harmless synthetic tokens which
+    # are consumed here and never handed to APT/Flatpak.
+    operations = libcalamares.globalstorage.value("packageOperations") or []
+    if isinstance(operations, (list, tuple)):
+        for operation in operations:
+            if not isinstance(operation, dict):
+                continue
+            for action, values in operation.items():
+                if action == "source" or not isinstance(values, (list, tuple)):
+                    continue
+                for value in values:
+                    if isinstance(value, dict):
+                        value = value.get("package") or value.get("name") or ""
+                    token = str(value or "")
+                    if token.startswith(NETINSTALL_TOKEN_PREFIX):
+                        selected.add(token[len(NETINSTALL_TOKEN_PREFIX):])
+
+    # Backwards-compatible reader for pre-v0.3.27 profiles/install media.
     for category in catalog.get("categories", []):
         key = "packagechooser_linuxiso_" + category["id"].replace("-", "_")
         raw = libcalamares.globalstorage.value(key) or ""
@@ -127,8 +161,11 @@ def _copy_profile(root, username):
             continue
         dst.parent.mkdir(parents=True, exist_ok=True)
         try:
-            text = src.read_text(encoding="utf-8", errors="strict")
+            raw = src.read_bytes()
+            text = None if b"\x00" in raw else raw.decode("utf-8", errors="strict")
         except (UnicodeDecodeError, OSError):
+            text = None
+        if text is None:
             shutil.copy2(src, dst)
         else:
             dst.write_text(text.replace("{{HOME}}", f"/home/{username}"), encoding="utf-8")
@@ -334,19 +371,39 @@ WantedBy=multi-user.target
 
 
 def _category_conf(category: dict[str, Any]) -> dict[str, Any]:
+    """Build a checkbox-based netinstall page with every app selected.
+
+    Each visible application is a top-level group.  Its hidden child carries a
+    synthetic token instead of a real distro package name, because Linux ISO
+    supports mixed providers (APT, Flatpak, Snap) in one chooser.  The custom
+    linuxiso-install job translates selected tokens back to catalog entries.
+    """
     return {
-        "mode": "optionalmultiple",
-        "method": "legacy",
-        "labels": {"step": f"Applications - {category['label']}"},
-        "items": [
+        "groupsUrl": "local",
+        "required": True,
+        "label": {
+            "sidebar": f"Applications - {category['label']}",
+            "title": "All applications are selected by default. Uncheck anything you do not want.",
+        },
+        "groups": [
             {
-                "id": item["id"],
                 "name": item["name"],
                 "description": (
                     f"Install online with {item['provider']} during installation "
                     "(with first-boot fallback if needed)."
                 ),
-                "screenshot": ":/images/no-selection.png",
+                "selected": True,
+                "critical": False,
+                "subgroups": [
+                    {
+                        "name": "Linux ISO selection token",
+                        "description": "Internal selection token",
+                        "hidden": True,
+                        "selected": True,
+                        "critical": False,
+                        "packages": [f"linuxiso__{item['id']}"],
+                    }
+                ],
             }
             for item in category["items"]
         ],
@@ -367,13 +424,13 @@ def generate_calamares_overlay(profile: Path, root: Path) -> dict[str, Any]:
 
     for category in catalog["categories"]:
         instance_id = "linuxiso_" + category["id"].replace("-", "_")
-        conf_name = f"packagechooser-{instance_id}.conf"
+        conf_name = f"netinstall-{instance_id}.conf"
         (modules_dir / conf_name).write_text(
             yaml.safe_dump(_category_conf(category), sort_keys=False, allow_unicode=True),
             encoding="utf-8",
         )
-        instances.append({"id": instance_id, "module": "packagechooser", "config": conf_name})
-        show.append(f"packagechooser@{instance_id}")
+        instances.append({"id": instance_id, "module": "netinstall", "config": conf_name})
+        show.append(f"netinstall@{instance_id}")
 
     job_dir = root / "usr/share/linux-iso/calamares/modules/linuxiso-install"
     job_dir.mkdir(parents=True, exist_ok=True)
@@ -403,12 +460,16 @@ def generate_calamares_overlay(profile: Path, root: Path) -> dict[str, Any]:
         "instances": instances,
         "sequence_patch": {
             "insert_before_summary": show,
-            "insert_in_exec_after_users": ["linuxiso-install"],
+            # Netinstall view modules expose jobs which must run before the
+            # custom mixed-provider installer so packageOperations contains the
+            # user's final checkbox state.
+            "insert_in_exec_after_users": [*show, "linuxiso-install"],
         },
-        "globalstorage_keys": ["packagechooser_" + i["id"] for i in instances],
+        "globalstorage_keys": ["packageOperations"],
         "notes": [
             "Merge this fragment into the distro's Calamares settings.conf.",
-            "Optional applications are selected category-by-category in packagechooser pages.",
+            "Optional applications are selected category-by-category in checkbox-based netinstall pages.",
+            "Every optional application starts selected; users opt out by unchecking it.",
             "APT/Flatpak selections are installed in the target during Calamares when possible.",
             "Snap, unsupported providers, or failed online installs are retried by linux-iso-firstboot.",
             "Appearance-required items are not optional and are always included in the install plan.",

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import shutil
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -39,6 +40,10 @@ TEXT_EXTENSIONS = {
 
 SHELL_FILES = {".zshrc", ".bashrc", "config.fish"}
 SHELL_EXTENSIONS = {".zsh", ".bash", ".fish", ".sh"}
+KACTIVITY_FAVORITES_AGENT = "org.kde.plasma.favorites.applications"
+WALLPAPER_IMAGE_EXTENSIONS = {
+    ".avif", ".bmp", ".gif", ".jpeg", ".jpg", ".jxl", ".png", ".svg", ".svgz", ".webp"
+}
 
 
 class CaptureError(RuntimeError):
@@ -118,6 +123,241 @@ def _copy_tree(src: Path, payload_home: Path, home: Path, kind: str, excluded: l
             continue
         captured.append(_copy_file(item, payload_home / relative, home, kind))
     return captured
+
+
+def _favorite_stats_only(text: str, home: Path) -> str:
+    """Keep only Kickoff favorites ordering groups from KActivities stats.
+
+    The source file can contain usage/statistics state unrelated to desktop
+    fidelity.  Favorites ordering is user-visible, so preserve those sections
+    while deliberately excluding history-like data.
+    """
+    chunks: list[str] = []
+    current: list[str] = []
+    keep = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            if keep and current:
+                chunks.extend(current)
+                chunks.append("")
+            section = stripped[1:-1]
+            keep = section.startswith("Favorites-")
+            current = [line] if keep else []
+            continue
+        if keep:
+            current.append(line)
+    if keep and current:
+        chunks.extend(current)
+    result = "\n".join(chunks).rstrip() + ("\n" if chunks else "")
+    return result.replace(str(home), "{{HOME}}")
+
+
+def _capture_kickoff_favorites_state(
+    home: Path,
+    payload_home: Path,
+) -> list[CapturedFile]:
+    """Capture only the state required to reproduce Kickoff favorites.
+
+    Membership lives in the KActivities SQLite ResourceLink table while the
+    display order lives in kactivitymanagerd-statsrc.  The database is backed up
+    through SQLite, stripped of all non-favorite activity/history rows, and
+    VACUUMed so deleted history is not left in free pages.
+    """
+    captured: list[CapturedFile] = []
+
+    stats_src = home / ".config/kactivitymanagerd-statsrc"
+    if stats_src.is_file():
+        try:
+            sanitized = _favorite_stats_only(
+                stats_src.read_text(encoding="utf-8", errors="replace"), home
+            )
+        except OSError:
+            sanitized = ""
+        if sanitized:
+            stats_dst = payload_home / ".config/kactivitymanagerd-statsrc"
+            stats_dst.parent.mkdir(parents=True, exist_ok=True)
+            stats_dst.write_text(sanitized, encoding="utf-8")
+            try:
+                shutil.copymode(stats_src, stats_dst)
+            except OSError:
+                pass
+            captured.append(
+                CapturedFile(
+                    source="{{HOME}}/.config/kactivitymanagerd-statsrc",
+                    destination="{{HOME}}/.config/kactivitymanagerd-statsrc",
+                    kind="kickoff-favorites-order",
+                    sha256=sha256_file(stats_dst),
+                )
+            )
+
+    db_src = home / ".local/share/kactivitymanagerd/resources/database"
+    if db_src.is_file():
+        db_dst = payload_home / ".local/share/kactivitymanagerd/resources/database"
+        db_dst.parent.mkdir(parents=True, exist_ok=True)
+        source = None
+        target = None
+        try:
+            source = sqlite3.connect(f"file:{db_src}?mode=ro", uri=True, timeout=2)
+            target = sqlite3.connect(db_dst)
+            source.backup(target)
+            tables = [
+                str(row[0])
+                for row in target.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+                )
+            ]
+            for table in tables:
+                quoted = '"' + table.replace('"', '""') + '"'
+                if table == "ResourceLink":
+                    target.execute(
+                        f"DELETE FROM {quoted} WHERE initiatingAgent <> ? OR initiatingAgent IS NULL",
+                        (KACTIVITY_FAVORITES_AGENT,),
+                    )
+                elif table != "SchemaInfo":
+                    target.execute(f"DELETE FROM {quoted}")
+            target.commit()
+            target.execute("VACUUM")
+            target.commit()
+        except (OSError, sqlite3.Error):
+            if target is not None:
+                target.close()
+                target = None
+            db_dst.unlink(missing_ok=True)
+        finally:
+            if source is not None:
+                source.close()
+            if target is not None:
+                target.close()
+
+        if db_dst.is_file():
+            try:
+                shutil.copymode(db_src, db_dst)
+            except OSError:
+                pass
+            captured.append(
+                CapturedFile(
+                    source="{{HOME}}/.local/share/kactivitymanagerd/resources/database",
+                    destination="{{HOME}}/.local/share/kactivitymanagerd/resources/database",
+                    kind="kickoff-favorites-membership",
+                    sha256=sha256_file(db_dst),
+                )
+            )
+    return captured
+
+
+def _slideshow_initial_overrides(home: Path) -> dict[str, str]:
+    """Choose the best approximation of the currently visible slideshow image.
+
+    Plasma 6 may leave the persisted ``Image=`` value one slide behind until
+    plasmashell exits.  Filesystem access time gives us a useful local signal for
+    the image most recently rendered, and unlike a screenshot it does not bake
+    panels/icons into the wallpaper.  This is used only for slideshow groups;
+    the complete slide collection is still captured separately.
+    """
+    config = home / ".config/plasma-org.kde.plasma.desktop-appletsrc"
+    if not config.is_file():
+        return {}
+    try:
+        lines = config.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return {}
+
+    groups: dict[str, dict[str, str]] = {}
+    section = ""
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped
+            groups.setdefault(section, {})
+            continue
+        if section and "=" in line:
+            key, value = line.split("=", 1)
+            groups[section][key.strip()] = value.strip()
+
+    overrides: dict[str, str] = {}
+    home_resolved = home.resolve()
+    for section, values in groups.items():
+        if "[Wallpaper][org.kde.slideshow][General]" not in section:
+            continue
+        raw_paths = values.get("SlidePaths", "").replace(";", ",").split(",")
+        candidates: list[Path] = []
+        for raw in raw_paths:
+            path = _normalize_local_config_path(raw, home)
+            if path is None:
+                continue
+            if path.is_file() and path.suffix.lower() in WALLPAPER_IMAGE_EXTENSIONS:
+                candidates.append(path)
+                continue
+            if not path.is_dir():
+                continue
+            try:
+                for item in path.rglob("*"):
+                    if (
+                        item.is_file()
+                        and not item.is_symlink()
+                        and item.suffix.lower() in WALLPAPER_IMAGE_EXTENSIONS
+                    ):
+                        candidates.append(item)
+            except OSError:
+                continue
+        if not candidates:
+            continue
+
+        def recency(path: Path) -> tuple[int, int, str]:
+            try:
+                stat = path.stat()
+                return stat.st_atime_ns, stat.st_mtime_ns, str(path)
+            except OSError:
+                return 0, 0, str(path)
+
+        chosen = max(candidates, key=recency)
+        try:
+            relative = chosen.resolve().relative_to(home_resolved)
+        except (OSError, ValueError):
+            # External slideshow directories are still captured, but without a
+            # portable path map at this early phase it is safer not to guess.
+            continue
+        overrides[section] = f"file://{{{{HOME}}}}/{relative.as_posix()}"
+    return overrides
+
+
+def _apply_slideshow_initial_overrides(
+    payload_home: Path,
+    overrides: dict[str, str],
+    captured_configs: list[CapturedFile],
+) -> None:
+    if not overrides:
+        return
+    config = payload_home / ".config/plasma-org.kde.plasma.desktop-appletsrc"
+    if not config.is_file():
+        return
+    try:
+        lines = config.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return
+    section = ""
+    changed = False
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped
+            continue
+        if section in overrides and "=" in line:
+            key, _value = line.split("=", 1)
+            if key.strip() == "Image":
+                replacement = f"Image={overrides[section]}"
+                if line != replacement:
+                    lines[index] = replacement
+                    changed = True
+    if not changed:
+        return
+    config.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    destination = "{{HOME}}/.config/plasma-org.kde.plasma.desktop-appletsrc"
+    for item in captured_configs:
+        if item.destination == destination:
+            item.sha256 = sha256_file(config)
+            break
 
 
 
@@ -580,6 +820,7 @@ def capture_profile(
     payload_home.mkdir(parents=True, exist_ok=True)
 
     configs, data_paths, terminal_paths = existing_kde_paths(home)
+    slideshow_overrides = _slideshow_initial_overrides(home)
     excluded: list[str] = []
     captured_configs: list[CapturedFile] = []
     captured_assets: list[CapturedFile] = []
@@ -594,6 +835,12 @@ def capture_profile(
         elif src.is_file():
             relative = _safe_relative(src, home)
             captured_configs.append(_copy_file(src, payload_home / relative, home, "config"))
+
+    # Kickoff favorite membership is stored in KActivities' SQLite database,
+    # not in the panel config. Capture only favorite rows plus the ordering
+    # sections so the launcher is visually reproduced without importing usage
+    # history or unrelated activity statistics.
+    captured_configs.extend(_capture_kickoff_favorites_state(home, payload_home))
 
     widgets = referenced_widgets(home)
     local_plasmoids = user_plasmoids(home)
@@ -886,6 +1133,7 @@ def capture_profile(
     _rewrite_captured_references(
         captured_configs + captured_assets, payload_home, replacements
     )
+    _apply_slideshow_initial_overrides(payload_home, slideshow_overrides, captured_configs)
     packages.sort(key=lambda p: (p.category, p.provider, p.name.lower()))
     desktop = DesktopProfile(
         desktop=desktop_name,
@@ -921,7 +1169,7 @@ def capture_profile(
             "application_install_mode": "online-selective",
             "profile_version": __version__,
             "asset_mode": asset_mode,
-            "fidelity_schema": 4,
+            "fidelity_schema": 5,
         },
     )
 
