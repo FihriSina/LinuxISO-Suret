@@ -93,21 +93,24 @@ def test_stage_iso_project_contains_profile_installer_and_required_packages(tmp_
     assert (destination / "root/usr/share/linux-iso/profile/catalog.json").is_file()
     assert (destination / "PORTABILITY.txt").is_file()
     assert (destination / "root/usr/share/linux-iso/calamares/modules/linuxiso-install/main.py").is_file()
-    chooser_path = destination / "root/etc/calamares/modules/netinstall-linuxiso_internet.conf"
+    chooser_path = destination / "root/etc/calamares/modules/packagechooserq-linuxiso_internet.conf"
     assert chooser_path.is_file()
     chooser = yaml.safe_load(chooser_path.read_text(encoding="utf-8"))
-    assert chooser["groups"]
-    assert all(group["selected"] is True for group in chooser["groups"])
-    assert all(group["subgroups"][0]["hidden"] is True for group in chooser["groups"])
-    assert all(
-        group["subgroups"][0]["packages"][0].startswith("linuxiso__")
-        for group in chooser["groups"]
-    )
+    assert chooser["method"] == "legacy"
+    assert chooser["packageChoice"]
+    assert chooser["qmlFilename"] == "/etc/calamares/linuxiso-app-qml/linuxiso_internet.qml"
+    qml = (destination / "root/etc/calamares/linuxiso-app-qml/linuxiso_internet.qml").read_text(encoding="utf-8")
+    assert "CheckBox" in qml
+    assert "Firefox" in qml
+    assert "checked: true" in qml
+    assert list((destination / "root/etc/calamares/linuxiso-app-cards").glob("*.svg"))
     fragment = yaml.safe_load(
         (destination / "root/etc/calamares/linux-iso-settings-fragment.yaml").read_text(encoding="utf-8")
     )
-    assert "netinstall@linuxiso_internet" in fragment["sequence_patch"]["insert_before_summary"]
-    assert "netinstall@linuxiso_internet" in fragment["sequence_patch"]["insert_in_exec_after_users"]
+    assert "packagechooserq@linuxiso_internet" in fragment["sequence_patch"]["insert_before_summary"]
+    assert fragment["sequence_patch"]["insert_in_exec_after_users"] == ["linuxiso-install"]
+    assert fragment["branding"] == "linuxiso-source"
+    assert (destination / "root/etc/calamares/branding/linuxiso-source/branding.desc").is_file()
 
     catalog = json.loads(
         (destination / "root/usr/share/linux-iso/profile/catalog.json").read_text(encoding="utf-8")

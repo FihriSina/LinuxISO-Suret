@@ -74,7 +74,7 @@ def test_v0327_captures_kickoff_favorites_order_membership_and_avatar(tmp_path: 
     profile = tmp_path / "profile"
     manifest = capture_profile(profile, home)
 
-    assert manifest.restore["fidelity_schema"] == 5
+    assert manifest.restore["fidelity_schema"] == 6
     assert (profile / "payload/home/.face").read_bytes() == b"avatar-bytes"
     assert (profile / "payload/home/.local/share/applications/alpha.desktop").is_file()
     assert (profile / "payload/home/.local/share/applications/beta.desktop").is_file()
@@ -132,6 +132,8 @@ def test_v0327_slideshow_uses_most_recent_source_slide_as_initial_image(tmp_path
     ).read_text(encoding="utf-8")
 
     assert "Image=file://{{HOME}}/Resimler/ArkaPlanlar/dreamlike-whale.jpg" in restored
+    assert "[Wallpaper][org.kde.image][General]" in restored
+    assert "[Wallpaper][org.kde.slideshow][General]" not in restored
     assert (profile / "payload/home/Resimler/ArkaPlanlar/dreamlike-whale.jpg").is_file()
     assert verify_profile(profile).ok
 
@@ -203,9 +205,11 @@ def test_v0327_calamares_checkbox_jobs_run_before_mixed_provider_installer(tmp_p
     merged = yaml.safe_load(settings.read_text(encoding="utf-8"))
     show = merged["sequence"][0]["show"]
     jobs = merged["sequence"][1]["exec"]
-    selectors = [item for item in show if item.startswith("netinstall@linuxiso_")]
-    assert selectors == ["netinstall@linuxiso_internet", "netinstall@linuxiso_communication"]
-    assert jobs.index("users") < jobs.index(selectors[0]) < jobs.index(selectors[1]) < jobs.index("linuxiso-install")
+    selectors = [item for item in show if item.startswith("packagechooserq@linuxiso_")]
+    assert selectors == ["packagechooserq@linuxiso_internet", "packagechooserq@linuxiso_communication"]
+    assert all(selector not in jobs for selector in selectors)
+    assert jobs.index("users") < jobs.index("linuxiso-install")
+    assert merged["branding"] == "linuxiso-source"
 
     runtime_script = (build / "root/usr/lib/linux-iso/patch-calamares-runtime.py").read_text(
         encoding="utf-8"
@@ -220,5 +224,5 @@ def test_v0327_calamares_checkbox_jobs_run_before_mixed_provider_installer(tmp_p
     patched = yaml.safe_load(settings.read_text(encoding="utf-8"))["sequence"][1]["exec"]
     profile_job = "shellprocess@linuxiso_apply_target_profile"
     assert patched.index("users") < patched.index(profile_job)
-    assert patched.index(profile_job) < patched.index(selectors[0])
-    assert patched.index(selectors[0]) < patched.index(selectors[1]) < patched.index("linuxiso-install")
+    assert patched.index(profile_job) < patched.index("linuxiso-install")
+    assert all(selector not in patched for selector in selectors)

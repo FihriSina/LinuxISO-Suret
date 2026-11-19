@@ -33,20 +33,21 @@ def test_v0316_uses_dynamic_checkbox_chooser_not_hardcoded_qml(tmp_path: Path):
     fragment = yaml.safe_load((build / "root/etc/calamares/linux-iso-settings-fragment.yaml").read_text())
     instances = fragment["instances"]
     assert instances
-    assert all(x["module"] == "netinstall" for x in instances)
-    assert "netinstall@linuxiso_internet" in fragment["sequence_patch"]["insert_before_summary"]
-    assert "packagechooserq@linuxiso_internet" not in fragment["sequence_patch"]["insert_before_summary"]
+    assert all(x["module"] == "packagechooserq" for x in instances)
+    assert "packagechooserq@linuxiso_internet" in fragment["sequence_patch"]["insert_before_summary"]
     chooser = yaml.safe_load(
-        (build / "root/etc/calamares/modules/netinstall-linuxiso_internet.conf").read_text(
+        (build / "root/etc/calamares/modules/packagechooserq-linuxiso_internet.conf").read_text(
             encoding="utf-8"
         )
     )
-    assert all(group["selected"] is True for group in chooser["groups"])
-    assert all(group["subgroups"][0]["hidden"] is True for group in chooser["groups"])
-    assert all(
-        group["subgroups"][0]["packages"][0].startswith("linuxiso__")
-        for group in chooser["groups"]
-    )
+    assert chooser["method"] == "legacy"
+    assert chooser["packageChoice"]
+    qml = (build / "root/etc/calamares/linuxiso-app-qml/linuxiso_internet.qml").read_text(encoding="utf-8")
+    assert "CheckBox" in qml
+    assert "checked: true" in qml
+    assert "Firefox" in qml
+    assert "LibreOffice" not in qml
+
 
 
 def test_v0316_installer_filesystem_helpers_are_explicit():

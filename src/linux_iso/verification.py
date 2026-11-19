@@ -83,10 +83,10 @@ def verify_profile(profile: Path) -> VerificationResult:
         fidelity_schema = int(restore.get("fidelity_schema", 0) or 0)
     except (TypeError, ValueError):
         fidelity_schema = 0
-    if fidelity_schema < 5:
+    if fidelity_schema < 6:
         warnings.append(
-            "Profile predates visible-state fidelity capture v5; re-run 'linux-iso scan' before the next ISO build "
-            "to preserve Kickoff favorites/order, avatar, visible KDE state, and slideshow initial-image fidelity."
+            "Profile predates source-native fidelity capture v6; re-run 'linux-iso scan' before the next ISO build "
+            "to preserve source distro branding, Kickoff favorites/order, avatar, visible KDE state, and wallpaper fidelity."
         )
     stats: dict[str, int | str] = {
         "asset_mode": restore.get("asset_mode", "legacy/all"),

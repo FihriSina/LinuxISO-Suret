@@ -50,6 +50,58 @@ class CaptureError(RuntimeError):
     pass
 
 
+def _source_brand_logo_candidates(source: dict[str, str | None]) -> list[Path]:
+    tokens: list[str] = []
+    for value in (source.get("distro_logo"), source.get("distro_id")):
+        value = str(value or "").strip()
+        if value and value not in tokens:
+            tokens.append(value)
+    for generic in ("distributor-logo", "start-here"):
+        if generic not in tokens:
+            tokens.append(generic)
+
+    roots = (
+        Path("/usr/share/pixmaps"),
+        Path("/usr/share/icons/hicolor/scalable/apps"),
+        Path("/usr/share/icons/hicolor/256x256/apps"),
+        Path("/usr/share/icons/hicolor/128x128/apps"),
+        Path("/usr/share/icons/hicolor/64x64/apps"),
+        Path("/usr/share/icons/hicolor/48x48/apps"),
+        Path("/usr/share/icons/breeze/apps/64"),
+        Path("/usr/share/icons/breeze/apps/48"),
+        Path("/usr/share/icons/breeze/apps/32"),
+    )
+    suffixes = (".svg", ".svgz", ".png", ".xpm")
+    candidates: list[Path] = []
+    for root in roots:
+        for token in tokens:
+            for name in (token, f"{token}-logo", f"logo-{token}"):
+                for suffix in suffixes:
+                    candidates.append(root / f"{name}{suffix}")
+    return candidates
+
+
+def _capture_source_branding(output: Path, source: dict[str, str | None]) -> dict[str, str | None]:
+    branding = output / "branding"
+    for candidate in _source_brand_logo_candidates(source):
+        if not candidate.is_file():
+            continue
+        try:
+            if candidate.stat().st_size > 8 * 1024 * 1024:
+                continue
+            branding.mkdir(parents=True, exist_ok=True)
+            suffix = candidate.suffix.lower() or ".img"
+            destination = branding / f"source-logo{suffix}"
+            shutil.copy2(candidate, destination)
+            source = dict(source)
+            source["branding_logo"] = destination.relative_to(output).as_posix()
+            source["branding_logo_source"] = str(candidate)
+            return source
+        except OSError:
+            continue
+    return source
+
+
 def _safe_relative(path: Path, home: Path) -> Path:
     return path.resolve().relative_to(home.resolve())
 
@@ -327,6 +379,14 @@ def _apply_slideshow_initial_overrides(
     overrides: dict[str, str],
     captured_configs: list[CapturedFile],
 ) -> None:
+    """Pin slideshow desktops to the source-visible image for deterministic first boot.
+
+    Plasma's slideshow plugin can ignore a persisted ``Image=`` value when a
+    fresh target session starts and immediately choose a target-distro wallpaper.
+    For a reproducible visual snapshot, Suret converts the copied slideshow
+    containment to the static image plugin while retaining all captured slide
+    files in the profile. This changes only the restored copy, never the source.
+    """
     if not overrides:
         return
     config = payload_home / ".config/plasma-org.kde.plasma.desktop-appletsrc"
@@ -336,29 +396,60 @@ def _apply_slideshow_initial_overrides(
         lines = config.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return
+
+    new_lines: list[str] = []
     section = ""
+    section_had_image = False
     changed = False
-    for index, line in enumerate(lines):
+
+    def finish_section() -> None:
+        nonlocal changed
+        if section in overrides and not section_had_image:
+            new_lines.append(f"Image={overrides[section]}")
+            changed = True
+
+    for line in lines:
         stripped = line.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
+            finish_section()
             section = stripped
+            section_had_image = False
+            if section in overrides:
+                replacement = section.replace(
+                    "[Wallpaper][org.kde.slideshow][General]",
+                    "[Wallpaper][org.kde.image][General]",
+                )
+                if replacement != line:
+                    line = replacement
+                    changed = True
+            new_lines.append(line)
             continue
+
+        if line.strip().lower() == "wallpaperplugin=org.kde.slideshow":
+            new_lines.append("wallpaperplugin=org.kde.image")
+            changed = True
+            continue
+
         if section in overrides and "=" in line:
             key, _value = line.split("=", 1)
             if key.strip() == "Image":
                 replacement = f"Image={overrides[section]}"
+                new_lines.append(replacement)
+                section_had_image = True
                 if line != replacement:
-                    lines[index] = replacement
                     changed = True
+                continue
+        new_lines.append(line)
+
+    finish_section()
     if not changed:
         return
-    config.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    config.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
     destination = "{{HOME}}/.config/plasma-org.kde.plasma.desktop-appletsrc"
     for item in captured_configs:
         if item.destination == destination:
             item.sha256 = sha256_file(config)
             break
-
 
 
 
@@ -1156,10 +1247,12 @@ def capture_profile(
         ],
     }
 
+    source_info = _capture_source_branding(output, collect_system_info())
+
     manifest = Manifest(
         schema_version=1,
         created_at=datetime.now(timezone.utc).isoformat(),
-        source=collect_system_info(),
+        source=source_info,
         desktop=desktop,
         packages=packages,
         security=security,
@@ -1169,7 +1262,7 @@ def capture_profile(
             "application_install_mode": "online-selective",
             "profile_version": __version__,
             "asset_mode": asset_mode,
-            "fidelity_schema": 5,
+            "fidelity_schema": 6,
         },
     )
 

@@ -68,8 +68,16 @@ def collect_system_info() -> dict[str, str | None]:
     return {
         "distro_id": release.get("ID"),
         "distro_name": release.get("PRETTY_NAME") or release.get("NAME"),
+        "distro_name_short": release.get("NAME") or release.get("PRETTY_NAME"),
         "distro_version": release.get("VERSION_ID"),
         "distro_like": release.get("ID_LIKE"),
+        "distro_variant": release.get("VARIANT"),
+        "distro_variant_id": release.get("VARIANT_ID"),
+        "distro_logo": release.get("LOGO"),
+        "distro_ansi_color": release.get("ANSI_COLOR"),
+        "distro_home_url": release.get("HOME_URL"),
+        "distro_support_url": release.get("SUPPORT_URL"),
+        "distro_bug_report_url": release.get("BUG_REPORT_URL"),
         "kernel": platform.release(),
         "architecture": platform.machine(),
     }

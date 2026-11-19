@@ -4,18 +4,29 @@
 
 > **Project principle:** distribute the Linux experience the user built, not the source disk image.
 
-## Current milestone: v0.3.27
+## Current milestone: v0.3.28
+
+### v0.3.28: source-native installer branding + visual application cards
+
+- Captures source-distribution identity metadata from `/etc/os-release` (name, version, logo token, colors and support URLs) and snapshots an available distro logo into the profile.
+- Generates a dedicated `linuxiso-source` Calamares branding component from the captured source identity instead of reusing Kubuntu branding. Pardus profiles therefore present Pardus product naming/colors/logo; other source distributions receive their own identity palette.
+- Uses the captured active wallpaper in the Calamares installation slideshow when available.
+- Slideshow-based source desktops are pinned to the source-visible image in the restored snapshot so Plasma cannot replace the first boot with the target distro default wallpaper; the full wallpaper collection remains captured.
+- Replaces the v0.3.27 netinstall tree with dynamically generated `packagechooserq` pages: one QML file per category, never a shared static LibreOffice page.
+- Every optional application remains selected by default; users opt out by unchecking cards.
+- Application choices are rendered as visual cards with name, provider, description and either a captured real application icon or an offline-generated branded fallback cover.
+- The live desktop launcher uses the captured source distribution name (`Install Pardus`, `Install Fedora`, etc.).
+- Adds fidelity schema v6; source branding requires a fresh scan.
 
 ### v0.3.27: visible desktop state + opt-out application selection
 
-- Replaces the multi-select `packagechooser` pages with one checkbox-based `netinstall` instance per application category while preserving the existing Internet / Communication / Office / Multimedia / Development / System Tools flow.
-- Every optional application starts selected; the installer user opts out by unchecking unwanted applications. Synthetic selection tokens are consumed by Suret's mixed-provider installer and are never passed to APT/Flatpak as package names.
+- v0.3.27 introduced opt-out selection through checkbox-based netinstall pages; v0.3.28 supersedes those pages with source-branded visual card pages while preserving the same selected-by-default behavior.
 - Captures Kickoff favorite membership from the KActivities `ResourceLink` database and exact favorite ordering from `kactivitymanagerd-statsrc`.
 - Sanitizes the captured KActivities database so only application-favorite links and schema metadata remain; activity/resource usage history is not copied.
 - Captures the source user's avatar and additional user-visible KDE state such as KWin rules, KRunner settings, locale, power-management settings and System Settings state.
 - Captures `.desktop` launchers referenced by Kickoff favorites in addition to task-manager pins.
-- For slideshow wallpapers, uses the most recently accessed source slide as the initial restored image to avoid Plasma 6's stale persisted `Image=` value presenting the target distro wallpaper on first boot.
-- Adds fidelity schema v5; a fresh source scan is required.
+- For slideshow wallpapers, uses the most recently accessed source slide as the initial restored image.
+- Fidelity schema v5 is superseded by v6.
 
 ### v0.3.26: moved-wallpaper reference repair
 

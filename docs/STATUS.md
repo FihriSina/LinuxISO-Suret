@@ -1,3 +1,15 @@
+## v0.3.28 implemented
+
+- Source distribution identity is now part of the captured profile: distro name/version, logo token, support/home URLs and a captured logo file when available.
+- Calamares no longer depends on Kubuntu branding for the visible installer. Suret generates and selects a `linuxiso-source` branding component using the source distro identity and active wallpaper.
+- Slideshow-based source desktops are pinned to the source-visible image in the restored snapshot so Plasma cannot replace the first boot with the target distro default wallpaper; the full wallpaper collection remains captured.
+- Optional application selection uses per-category dynamically generated QML card pages. All cards start selected; the user unchecks unwanted apps.
+- Cards use a captured source application icon when available and an offline generated branded cover otherwise.
+- The application-card QML is generated from the catalog per category, so the old fixed `packagechooserq`/LibreOffice regression cannot recur.
+- Live installer launcher naming is source-aware.
+- Fidelity schema v6 requires a fresh scan.
+- Full regression suite passes.
+
 ## v0.3.27 implemented
 
 - Optional application selection is now opt-out: every visible app is selected by default in checkbox-based Calamares category pages.

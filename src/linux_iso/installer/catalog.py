@@ -22,6 +22,43 @@ CATEGORY_ORDER = [
     "other",
 ]
 
+APPLICATION_PRESENTATION: dict[str, tuple[str, str]] = {
+    "firefox": ("Firefox", "Web browser with privacy and developer tools."),
+    "org.mozilla.firefox": ("Firefox", "Web browser with privacy and developer tools."),
+    "signal-desktop": ("Signal", "Private messaging for desktop."),
+    "org.signal.Signal": ("Signal", "Private messaging for desktop."),
+    "org.onlyoffice.desktopeditors": ("ONLYOFFICE", "Documents, spreadsheets and presentations."),
+    "vlc": ("VLC", "Versatile video and audio player."),
+    "org.videolan.VLC": ("VLC", "Versatile video and audio player."),
+    "mpv": ("MPV", "Fast, lightweight media player."),
+    "ffmpeg": ("FFmpeg", "Audio and video conversion toolkit."),
+    "io.freetubeapp.FreeTube": ("FreeTube", "Privacy-focused desktop YouTube client."),
+    "org.flameshot.Flameshot": ("Flameshot", "Powerful screenshot and annotation tool."),
+    "org.kde.koko": ("Koko", "Simple image gallery for KDE."),
+    "git": ("Git", "Distributed version control system."),
+    "cmake": ("CMake", "Cross-platform build system generator."),
+    "code": ("Visual Studio Code", "Code editor with extension support."),
+    "podman": ("Podman", "Daemonless container engine."),
+    "com.google.AndroidStudio": ("Android Studio", "Android development environment."),
+    "fastfetch": ("Fastfetch", "Fast system information utility."),
+    "io.github.kolunmi.Bazaar": ("Bazaar", "Graphical application browser."),
+    "com.brave.Browser": ("Brave", "Privacy-focused Chromium web browser."),
+    "one.ablaze.floorp": ("Floorp", "Customizable Firefox-based web browser."),
+    "app.zen_browser.zen": ("Zen Browser", "Minimal, customizable web browser."),
+    "steam": ("Steam", "PC game library and storefront."),
+    "com.valvesoftware.Steam": ("Steam", "PC game library and storefront."),
+}
+
+
+def _presentation(name: str, reason: str | None) -> tuple[str, str]:
+    if name in APPLICATION_PRESENTATION:
+        return APPLICATION_PRESENTATION[name]
+    short = name.rsplit(".", 1)[-1].replace("-", " ").replace("_", " ").strip()
+    display = " ".join(part.upper() if len(part) <= 3 else part.title() for part in short.split()) or name
+    description = (reason or "Optional application. Selected by default; uncheck to skip.").strip()
+    return display, description
+
+
 CATEGORY_LABELS = {
     "internet": "Internet",
     "communication": "Communication",
@@ -57,9 +94,12 @@ def build_catalog(profile: Path) -> dict[str, Any]:
     required: list[dict[str, Any]] = []
 
     for package in manifest.get("packages", []):
+        display_name, description = _presentation(package["name"], package.get("reason"))
         item = {
             "id": package_item_id(package.get("provider", "unknown"), package["name"]),
             "name": package["name"],
+            "display_name": display_name,
+            "description": description,
             "provider": package.get("provider", "unknown"),
             "category": package.get("category", "other"),
             "required_for_appearance": bool(package.get("required_for_appearance", False)),

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import xml.etree.ElementTree as ET
@@ -138,6 +139,9 @@ def main():
     settings = yaml.safe_load(SETTINGS.read_text(encoding="utf-8")) or {}
     fragment = yaml.safe_load(FRAGMENT.read_text(encoding="utf-8")) or {}
 
+    if fragment.get("branding"):
+        settings["branding"] = fragment["branding"]
+
     modules_search = settings.setdefault("modules-search", ["local"])
     custom_modules = "/usr/share/linux-iso/calamares/modules"
     if custom_modules not in modules_search:
@@ -218,6 +222,12 @@ def patch_branding_text() -> None:
         if not base.is_dir():
             continue
         for path in base.rglob("*"):
+            # Never rewrite the generated source-native branding component; a
+            # Kubuntu source profile must remain Kubuntu, Pardus must remain
+            # Pardus, etc. This replacement exists only for hidden legacy
+            # distro branding files that are no longer selected by Suret.
+            if "linuxiso-source" in path.parts:
+                continue
             if not path.is_file() or path.suffix.lower() not in {".desc", ".conf", ".txt", ".html", ".qml"}:
                 continue
             try:
@@ -233,6 +243,7 @@ def patch_branding_text() -> None:
 
 def patch_settings() -> None:
     settings = yaml.safe_load(SETTINGS.read_text(encoding="utf-8")) or {}
+    settings["branding"] = "linuxiso-source"
     instances = settings.setdefault("instances", [])
     wanted_instances = (
         {
@@ -337,9 +348,10 @@ def patch_settings() -> None:
                 if profile_job not in patched:
                     patched.append(profile_job)
                 profile_inserted = True
-                # v0.3.27+ netinstall instances publish the checkbox state as
-                # packageOperations jobs.  Do not run linuxiso-install until
-                # those jobs have executed.
+                # Legacy v0.3.27 netinstall instances had exec jobs. v0.3.28+
+                # packagechooserq writes selection state during the show phase
+                # and therefore needs no exec selector. Keep this ordering code
+                # only for backwards-compatible media.
                 if not has_selection_jobs and install_job not in patched:
                     patched.append(install_job)
                     install_inserted = True
@@ -951,7 +963,12 @@ def _write_config_xml(destination: Path, recipe: BaseRecipe, manifest: dict[str,
     ET.ElementTree(root).write(destination, encoding="utf-8", xml_declaration=True)
 
 
-def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
+def _write_build_scripts(destination: Path, recipe: BaseRecipe, manifest: dict[str, Any]) -> None:
+    source = manifest.get("source", {}) or {}
+    source_name = str(source.get("distro_name_short") or source.get("distro_name") or "Linux").strip()
+    source_name = re.sub(r"\s+GNU/Linux.*$", "", source_name, flags=re.IGNORECASE).strip() or "Linux"
+    installer_name = f"Install {source_name}"
+    installer_comment = f"Install the captured {source_name} desktop profile"
     patcher = destination / "root/usr/lib/linux-iso/patch-calamares.py"
     patcher.parent.mkdir(parents=True, exist_ok=True)
     patcher.write_text(PATCH_CALAMARES, encoding="utf-8")
@@ -1164,8 +1181,8 @@ def _write_build_scripts(destination: Path, recipe: BaseRecipe) -> None:
         "cat > /home/live/Desktop/linux-iso-installer.desktop <<'EOF'\n"
         "[Desktop Entry]\n"
         "Type=Application\n"
-        "Name=Install Linux ISO - Suret\n"
-        "Comment=Install this personalized Linux system\n"
+        f"Name={installer_name}\n"
+        f"Comment={installer_comment}\n"
         "Exec=linux-iso-installer\n"
         "Icon=system-software-install\n"
         "Terminal=false\n"
@@ -1385,7 +1402,7 @@ def generate_kiwi_project(
     shutil.copytree(profile, share_profile)
 
     generate_calamares_overlay(profile, overlay)
-    _write_build_scripts(destination, recipe)
+    _write_build_scripts(destination, recipe, manifest)
     _write_config_xml(destination / "config.xml", recipe, manifest)
 
     from linux_iso.portability import portability_report
