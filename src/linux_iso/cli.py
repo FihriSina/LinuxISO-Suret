@@ -6,6 +6,7 @@ from pathlib import Path
 
 from linux_iso.branding import PRODUCT_NAME
 from linux_iso.builder.kiwi import BuilderError, RECIPES, generate_kiwi_project, run_kiwi_build
+from linux_iso.builder.native import NativeIsoError, probe_native_iso, run_native_build, stage_native_project
 from linux_iso.buildenv import build_host_report
 from linux_iso.capture import CaptureError, capture_profile
 from linux_iso.diagnostics import doctor_report
@@ -68,6 +69,24 @@ def build_parser() -> argparse.ArgumentParser:
     build_iso.add_argument("--recipe", choices=sorted(RECIPES), default="ubuntu-26.04-kde")
     build_iso.add_argument("--backend", choices=("auto", "container", "boxbuild", "direct"), default="auto")
 
+    probe_iso = sub.add_parser("probe-iso", help="Inspect a user-supplied base ISO for Native ISO Mode")
+    probe_iso.add_argument("base_iso", type=Path)
+    probe_iso.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+
+    native = sub.add_parser("stage-native", help="Stage a native-distro remaster project from a user-supplied ISO")
+    native.add_argument("profile", type=Path)
+    native.add_argument("base_iso", type=Path)
+    native.add_argument("-o", "--output", type=Path, default=Path("./linux-iso-native-build"))
+    native.add_argument("--result", type=Path, default=None)
+    native.add_argument("--replace-base-desktop", action="store_true", help="Remove the base XFCE session after KDE is installed")
+
+    native_build = sub.add_parser("build-native", help="Stage and build a native-distro ISO remaster")
+    native_build.add_argument("profile", type=Path)
+    native_build.add_argument("base_iso", type=Path)
+    native_build.add_argument("-o", "--output", type=Path, default=Path("./linux-iso-native-build"))
+    native_build.add_argument("--result", type=Path, default=None)
+    native_build.add_argument("--replace-base-desktop", action="store_true")
+
     sub.add_parser("recipes", help="List available base ISO recipes")
     sub.add_parser("doctor", help="Diagnose the local Python/uv development environment")
     sub.add_parser("build-doctor", help="Diagnose KIWI/QEMU build host readiness")
@@ -128,6 +147,38 @@ def main(argv: list[str] | None = None) -> int:
             print(f"ISO build project staged: {path.resolve()}")
             print(f"Starting KIWI build with backend: {args.backend}")
             return run_kiwi_build(path, backend=args.backend)
+        if args.command == "probe-iso":
+            import json
+            probe = probe_native_iso(args.base_iso)
+            if args.json:
+                print(json.dumps(probe.to_dict(), ensure_ascii=False, indent=2))
+            else:
+                print("Linux ISO - Suret Native ISO probe")
+                print("================================")
+                print(f"Base ISO: {probe.base_iso}")
+                print(f"Distribution: {probe.distro_name} ({probe.distro_id})")
+                print(f"Version: {probe.distro_version or 'unknown'}")
+                print(f"Package family: {probe.package_family}")
+                print(f"Live rootfs: {probe.live_rootfs}")
+                print(f"Installer: {probe.installer}")
+                print(f"Desktop hint: {probe.desktop_hint or 'unknown'}")
+                print(f"Native build support: {'yes' if probe.supports_native_build else 'probe-only'}")
+            return 0
+        if args.command == "stage-native":
+            path = stage_native_project(
+                args.profile, args.base_iso, args.output, result=args.result,
+                replace_desktop=args.replace_base_desktop,
+            )
+            print(f"Native ISO project staged: {path.resolve()}")
+            print(f"Build command: cd {path.resolve()} && ./build-native.sh")
+            return 0
+        if args.command == "build-native":
+            path = stage_native_project(
+                args.profile, args.base_iso, args.output, result=args.result,
+                replace_desktop=args.replace_base_desktop,
+            )
+            print(f"Native ISO project staged: {path.resolve()}")
+            return run_native_build(path)
         if args.command == "recipes":
             for recipe_id in sorted(RECIPES):
                 print(recipe_id)
@@ -139,7 +190,7 @@ def main(argv: list[str] | None = None) -> int:
             report = build_host_report()
             print(report.render())
             return 0 if report.ready else 5
-    except (CaptureError, RestoreError, BuilderError, FileNotFoundError, KeyError) as exc:
+    except (CaptureError, RestoreError, BuilderError, NativeIsoError, FileNotFoundError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     return 1

@@ -1,77 +1,61 @@
 # Linux ISO - Suret architecture
 
-Linux ISO separates **personalization state** from **hardware/system identity**.
+Linux ISO separates **personalization state** from **hardware/system identity** and now has two build modes.
 
-## Pipeline
+## Primary path: Native ISO Mode (v0.5.0+)
 
 ```text
-Running KDE Plasma system
+Running personalized Linux desktop
           │
           ▼
       Capture Core
           │
-   ┌──────┼────────────┐
-   ▼      ▼            ▼
- KDE    Package      Security
-Adapter Inventory    Sanitizer
-   │      │            │
-   └──────┼────────────┘
           ▼
-  Portable Profile
- manifest + payload
+   Portable Profile
           │
-          ├── verify
-          ▼
-  Distro Build Adapter
-          │
-   ┌──────┴─────────┐
-   ▼                ▼
- KIWI NG          Calamares
+          ├──────────── user supplies official distro ISO
+          │                         │
+          ▼                         ▼
+  Native ISO Adapter ──────► probe distro / live rootfs / installer
           │
           ▼
-      Live ISO
+  unpack native live rootfs
+          │
+          ├── install missing target desktop inside the SAME distro
+          ├── install portable/source applications when resolvable
+          ├── embed Suret profile and first-login convergence
+          └── preserve distro kernel, repositories, bootloader and installer
+          │
+          ▼
+   repack native ISO
 ```
 
-## Active-only capture
+Pardus 25 `/live/filesystem.squashfs` is the first build-capable native adapter. A KDE profile on a Pardus XFCE base installs KDE into Pardus; it does **not** change the base to Ubuntu.
 
-The canonical v0.2.5 profile defaults to `asset_mode=active`. Installed-but-unused theme collections are not copied automatically. Active component directories are copied whole, while direct one-off asset references are copied individually.
+Native mode intentionally refuses silent cross-distro grafting. If the profile was captured from Pardus, the selected native base must also be Pardus.
 
-The active graph currently includes:
+## Secondary path: Generic Build Mode
 
-- referenced Plasma widgets;
-- active KDE/Plasma appearance components;
-- transitive icon-theme inheritance;
-- user fonts and launcher overrides;
-- KWin scripts/effects/tabbox user state;
-- local hicolor overrides;
-- direct SVG/PNG/JPG/font/sound references;
-- complete wallpaper bundles when a referenced file belongs to a local wallpaper package.
+The existing KIWI + Ubuntu/Kubuntu + Calamares pipeline remains available for experimental/custom base images:
 
-`--asset-mode all` preserves the earlier broad capture behavior for diagnostics.
+```text
+Portable Profile → KIWI recipe → Calamares → Generic Live ISO
+```
 
-## Verification boundary
+This mode is no longer the preferred path when the user wants the resulting system to remain genuinely Pardus/Fedora/etc.
 
-`linux-iso verify` validates that every manifest payload file exists and matches its SHA-256, bundled components/widgets have payload content, and package-owned appearance dependencies are marked required. Missing global Look-and-Feel meta packages are warnings when subcomponents are captured; unresolved active components/widgets are errors.
+## Capture and profile rules
 
-ISO staging calls verification before generating a KIWI project.
+- Active-only appearance capture remains the default.
+- `verify` validates payload integrity and required appearance dependencies.
+- Source-home paths remain normalized to `{{HOME}}`.
+- Known credential stores and likely secrets remain excluded/redacted.
+- Application identity retains provider (`apt`, `dnf`, `pacman`, `flatpak`, etc.) rather than pretending package names are universally portable.
 
-## Portable profile
+## Native remaster boundary
 
-All source-home paths are normalized to `{{HOME}}`. The profile does not contain a raw copy of `/`, hardware IDs, filesystem UUIDs or known credential stores.
+The native adapter operates on the user's supplied ISO rather than reconstructing the distro from another base. For Pardus 25 this means preserving the official GRUB/ISOLINUX tree, `pardus-installer`, APT identity and `/live/filesystem.squashfs`, while changing the live filesystem contents.
 
-## Application inventory
+## Launcher resolution in Native Mode
 
-APT/Pacman/DNF/Zypper identity is retained rather than pretending package names are portable across distro families. Flatpak remotes and Snap install options are preserved. System packages remain in inventory but are hidden from the optional app chooser unless they are user-facing or appearance-required.
-
-## Security
-
-Known credential locations are excluded, likely shell secrets are redacted and very large files are excluded. A later public-export workflow should add a second secret scan over the final staged profile.
-
-
-## Portability gate (v0.2.9)
-
-`verify` answers whether the captured profile is internally complete and untampered.
-`portability` answers whether that verified profile is suitable for a selected ISO recipe.
-The second gate checks package-family compatibility, surfaces unusual widget QML runtime
-imports, records active user KWin plugins, and carries verification warnings forward.
-KIWI staging writes the result to `PORTABILITY.txt`.
+Capture may carry Generic Mode compatibility translations, but it also stores the source `Exec=` contract in reversible Suret metadata. The Native adapter removes that metadata and restores same-distro commands. Only browser/web launchers and explicitly mapped third-party vendor applications remain portable fallbacks. This keeps Pardus-native tools native while avoiding broken third-party favorites when the official ISO does not contain a user's external APT repository.

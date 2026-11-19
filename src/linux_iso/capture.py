@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -338,7 +339,15 @@ def _rewrite_desktop_exec_compat(text: str) -> str:
         if replacement is None:
             lines.append(line)
             continue
+        # Keep a reversible copy of the source Exec contract. Generic mode
+        # still receives the portable replacement, while Native ISO mode can
+        # restore distro-native launchers (for example pardus-about) when the
+        # base ISO is the same distribution as the captured profile. Base64
+        # avoids Desktop Entry escaping ambiguities and the command has already
+        # had the source home path rewritten to {{HOME}} above.
+        encoded = base64.urlsafe_b64encode(command.encode("utf-8")).decode("ascii")
         lines.append(f"Exec={replacement}{newline}")
+        lines.append(f"X-Suret-Original-Exec-B64={encoded}{newline}")
     return "".join(lines)
 
 
