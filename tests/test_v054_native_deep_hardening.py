@@ -65,9 +65,9 @@ def _probe() -> native.NativeIsoProbe:
 
 
 def test_v054_version_and_native_scripts_are_bumped():
-    assert __version__ == "0.6.2"
-    assert "v0.6.2 Native ISO acceptance" in Path("scripts/native-acceptance.sh").read_text(encoding="utf-8")
-    assert "v0.6.2 Native retry" in Path("scripts/retry-native-acceptance.sh").read_text(encoding="utf-8")
+    assert __version__ == "0.6.3"
+    assert "v0.6.3 Native ISO acceptance" in Path("scripts/native-acceptance.sh").read_text(encoding="utf-8")
+    assert "v0.6.3 Native retry" in Path("scripts/retry-native-acceptance.sh").read_text(encoding="utf-8")
 
 
 def test_v054_required_appearance_packages_have_a_separate_mandatory_plan():
@@ -161,7 +161,7 @@ def test_v054_stage_replaces_stale_profile_and_records_fingerprint(tmp_path: Pat
 
     assert not stale.exists()
     restore = yaml.safe_load((out / "profile/native-restore.json").read_text(encoding="utf-8"))
-    assert restore["schema"] == 2
+    assert restore["schema"] == 3
     assert len(restore["profile_fingerprint"]) == 64
     assert "marker_matches(PRELOGIN_MARKER, fingerprint)" in (out / "native-first-login.py").read_text(encoding="utf-8")
 

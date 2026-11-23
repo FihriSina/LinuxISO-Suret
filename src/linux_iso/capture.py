@@ -144,7 +144,12 @@ def _read_sddm_theme(
     return values
 
 
-def _copy_visual_tree(src: Path, dst: Path) -> bool:
+def _copy_visual_tree(
+    src: Path,
+    dst: Path,
+    *,
+    trusted_roots: Iterable[Path] | None = None,
+) -> bool:
     try:
         if not src.exists() or src.is_symlink() or path_is_sensitive(src):
             return False
@@ -152,9 +157,27 @@ def _copy_visual_tree(src: Path, dst: Path) -> bool:
             shutil.rmtree(dst) if dst.is_dir() else dst.unlink()
         if src.is_dir():
             root = src.resolve()
+            roots = [root]
+            if trusted_roots is not None:
+                for candidate in trusted_roots:
+                    try:
+                        resolved = candidate.resolve(strict=False)
+                    except OSError:
+                        continue
+                    if resolved not in roots:
+                        roots.append(resolved)
             dst.mkdir(parents=True, exist_ok=True)
             copied = False
             active_dirs: set[Path] = set()
+
+            def trusted(path: Path) -> bool:
+                for allowed in roots:
+                    try:
+                        path.relative_to(allowed)
+                        return True
+                    except ValueError:
+                        continue
+                return False
 
             def copy_dir(current: Path, target_root: Path) -> None:
                 nonlocal copied
@@ -164,9 +187,7 @@ def _copy_visual_tree(src: Path, dst: Path) -> bool:
                     return
                 if resolved_current in active_dirs:
                     return
-                try:
-                    resolved_current.relative_to(root)
-                except ValueError:
+                if not trusted(resolved_current):
                     return
                 active_dirs.add(resolved_current)
                 try:
@@ -181,10 +202,11 @@ def _copy_visual_tree(src: Path, dst: Path) -> bool:
                     if item.is_symlink():
                         try:
                             resolved = item.resolve(strict=True)
-                            resolved.relative_to(root)
-                        except (OSError, ValueError):
+                        except OSError:
+                            continue
+                        if not trusted(resolved):
                             # Never allow a theme symlink to pull arbitrary data
-                            # from outside the captured theme tree.
+                            # from outside the explicitly trusted theme roots.
                             continue
                         if resolved.is_dir():
                             target.mkdir(parents=True, exist_ok=True)
@@ -362,14 +384,18 @@ def _bundle_sddm_external_assets(theme_dir: Path, captured_theme: Path, home: Pa
     return sorted(set(copied))
 
 
-def _capture_system_visual_fidelity(output: Path, home: Path) -> dict[str, object]:
+def _capture_system_visual_fidelity(
+    output: Path,
+    home: Path,
+    component_details: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
     """Capture non-personal, user-visible boot/login appearance.
 
     This intentionally excludes machine IDs, accounts and host-specific boot
     entries. Only theme assets and presentation-related settings are retained.
     """
     payload = output / "payload/system"
-    visual: dict[str, object] = {"schema": 2, "grub": {}, "sddm": {}}
+    visual: dict[str, object] = {"schema": 3, "grub": {}, "sddm": {}}
 
     grub = _read_grub_defaults()
     grub_meta: dict[str, object] = {"settings": grub}
@@ -395,13 +421,41 @@ def _capture_system_visual_fidelity(output: Path, home: Path) -> dict[str, objec
         candidates = _sddm_theme_candidates(sddm)
         theme_dir = next((x for x in candidates if x.is_dir()), None)
         captured_theme = payload / "sddm/theme"
-        if theme_dir and _copy_visual_tree(theme_dir, captured_theme):
+        trusted_theme_roots: list[Path] = []
+        configured_root = str(sddm.get("ThemeDir") or "").strip()
+        if configured_root.startswith("/"):
+            trusted_theme_roots.append(Path(configured_root))
+        trusted_theme_roots.extend(
+            [Path("/usr/local/share/sddm/themes"), Path("/usr/share/sddm/themes")]
+        )
+        if theme_dir and _copy_visual_tree(
+            theme_dir, captured_theme, trusted_roots=trusted_theme_roots
+        ):
             sddm_meta["theme_captured"] = True
             sddm_meta["source_theme"] = current
             sddm_meta["source_theme_dir"] = str(theme_dir.parent)
             bundled = _bundle_sddm_external_assets(theme_dir, captured_theme, home)
             if bundled:
                 sddm_meta["external_assets"] = bundled
+
+    # KDE's SDDM KCM can sync the user's Plasma presentation settings into
+    # the dedicated sddm account. Record the active *direct* appearance
+    # components so Native restore can promote the exact captured bundles to
+    # system-readable locations before SDDM paints its first frame.
+    direct_components: dict[str, dict[str, object]] = {}
+    for component in component_details or []:
+        kind = str(component.get("kind") or "")
+        if not kind or component.get("inherited"):
+            continue
+        if kind not in {"icon-theme", "cursor-theme", "plasma-theme", "color-scheme", "look-and-feel"}:
+            continue
+        direct_components.setdefault(kind, {
+            "name": str(component.get("name") or ""),
+            "bundled": bool(component.get("bundled")),
+            "bundle_root": component.get("bundle_root"),
+        })
+    if direct_components:
+        sddm_meta["desktop_sync"] = direct_components
     visual["sddm"] = sddm_meta
 
     output.mkdir(parents=True, exist_ok=True)
@@ -1169,9 +1223,12 @@ def _captured_visible_wallpaper(payload_home: Path) -> str | None:
     return None
 
 
-def _captured_slideshow_state(payload_home: Path) -> dict[str, object]:
+def _captured_slideshow_state(
+    payload_home: Path,
+    runtime_states: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
     config = payload_home / ".config/plasma-org.kde.plasma.desktop-appletsrc"
-    result: dict[str, object] = {"active": False, "paths": [], "containments": 0}
+    result: dict[str, object] = {"active": False, "paths": [], "containments": 0, "entries": []}
     if not config.is_file():
         return result
     try:
@@ -1179,34 +1236,70 @@ def _captured_slideshow_state(payload_home: Path) -> dict[str, object]:
     except OSError:
         return result
 
+    runtime_screen: dict[int, int] = {}
+    for state in runtime_states or []:
+        try:
+            runtime_screen[int(state.get("id"))] = int(state.get("screen", -1))
+        except (TypeError, ValueError):
+            continue
+
+    groups: dict[str, dict[str, str]] = {}
     section = ""
-    active_sections: set[str] = set()
-    paths: list[str] = []
+    plugin_by_containment: dict[int, str] = {}
+    section_re = re.compile(r"^\[Containments\]\[(\d+)\](.*)$")
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
             section = stripped
-            if "[Wallpaper][org.kde.slideshow][General]" in section:
-                active_sections.add(section)
+            groups.setdefault(section, {})
             continue
-        if "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        if key.strip().lower() == "wallpaperplugin" and value.strip() == "org.kde.slideshow":
-            result["active"] = True
-        if section in active_sections and key.strip() == "SlidePaths":
-            for raw in value.replace(";", ",").split(","):
-                token = unquote(raw.strip())
-                if token.startswith("file://"):
-                    token = token[7:]
-                if token and token not in paths:
-                    paths.append(token)
-    if active_sections:
-        result["active"] = True
-    result["paths"] = paths
-    result["containments"] = len(active_sections)
-    return result
+        if section and "=" in line:
+            key, value = line.split("=", 1)
+            groups[section][key.strip()] = value.strip()
+            match = section_re.match(section)
+            if match and match.group(2) == "" and key.strip().lower() == "wallpaperplugin":
+                plugin_by_containment[int(match.group(1))] = value.strip()
 
+    paths: list[str] = []
+    entries: list[dict[str, object]] = []
+    for group, settings in groups.items():
+        match = section_re.match(group)
+        if not match or not group.endswith("[Wallpaper][org.kde.slideshow][General]"):
+            continue
+        cid = int(match.group(1))
+        plugin = plugin_by_containment.get(cid, "org.kde.slideshow")
+        if plugin != "org.kde.slideshow":
+            continue
+        portable_settings: dict[str, str] = {}
+        for key, value in settings.items():
+            if not key or len(key) > 128 or any(ch in key for ch in "\r\n\0"):
+                continue
+            if len(value) > 16384 or any(ch in value for ch in "\r\0"):
+                continue
+            portable_settings[key] = value
+        raw_paths = portable_settings.get("SlidePaths", "")
+        entry_paths: list[str] = []
+        for raw in raw_paths.replace(";", ",").split(","):
+            token = unquote(raw.strip())
+            if token.startswith("file://"):
+                token = token[7:]
+            if token and token not in paths:
+                paths.append(token)
+            if token and token not in entry_paths:
+                entry_paths.append(token)
+        entries.append({
+            "containment_id": cid,
+            "screen": runtime_screen.get(cid, -1),
+            "plugin": "org.kde.slideshow",
+            "paths": entry_paths,
+            "settings": portable_settings,
+        })
+
+    result["active"] = bool(entries)
+    result["paths"] = paths
+    result["containments"] = len(entries)
+    result["entries"] = entries
+    return result
 
 
 def _copy_external_tree(
@@ -1269,13 +1362,148 @@ def _copy_component(
     target_relative: Path,
     home: Path,
     excluded: list[str],
+    kind: str,
 ) -> list[CapturedFile]:
+    """Copy an active appearance component with safe symlink dereferencing.
+
+    Third-party KDE icon/theme packs downloaded through KNewStuff frequently
+    contain many relative symlinks (Tela is a common example). The generic
+    profile copier deliberately ignores symlinks because profiles must remain
+    inert regular-file bundles. For *appearance components* we can preserve the
+    visual result safely by dereferencing a link only when its final target stays
+    inside an allow-listed appearance root. The target is copied as a regular
+    file/directory at the link's visible path, so the resulting profile itself
+    still contains no symlinks.
+    """
     destination = payload_home / target_relative
-    if src.is_dir():
-        return _copy_external_tree(src, destination, home, "appearance-component", excluded)
-    if src.is_file():
-        return [_copy_file(src, destination, home, "appearance-component")]
-    return []
+
+    roots_by_kind: dict[str, tuple[Path, ...]] = {
+        "icon-theme": (
+            home / ".local/share/icons",
+            home / ".icons",
+            Path("/usr/local/share/icons"),
+            Path("/usr/share/icons"),
+        ),
+        "cursor-theme": (
+            home / ".local/share/icons",
+            home / ".icons",
+            Path("/usr/local/share/icons"),
+            Path("/usr/share/icons"),
+        ),
+        "plasma-theme": (
+            home / ".local/share/plasma/desktoptheme",
+            Path("/usr/local/share/plasma/desktoptheme"),
+            Path("/usr/share/plasma/desktoptheme"),
+        ),
+        "look-and-feel": (
+            home / ".local/share/plasma/look-and-feel",
+            Path("/usr/local/share/plasma/look-and-feel"),
+            Path("/usr/share/plasma/look-and-feel"),
+        ),
+        "splash-theme": (
+            home / ".local/share/plasma/look-and-feel",
+            Path("/usr/local/share/plasma/look-and-feel"),
+            Path("/usr/share/plasma/look-and-feel"),
+        ),
+        "window-decoration": (
+            home / ".local/share/aurorae/themes",
+            home / ".local/share/kwin/decorations",
+            Path("/usr/local/share/aurorae/themes"),
+            Path("/usr/share/aurorae/themes"),
+            Path("/usr/local/share/kwin/decorations"),
+            Path("/usr/share/kwin/decorations"),
+        ),
+        "gtk-theme": (
+            home / ".local/share/themes",
+            home / ".themes",
+            Path("/usr/local/share/themes"),
+            Path("/usr/share/themes"),
+        ),
+        "kvantum-theme": (
+            home / ".config/Kvantum",
+            home / ".local/share/Kvantum",
+            Path("/usr/local/share/Kvantum"),
+            Path("/usr/share/Kvantum"),
+        ),
+        "kwin-script": (
+            home / ".local/share/kwin/scripts",
+            Path("/usr/local/share/kwin/scripts"),
+            Path("/usr/share/kwin/scripts"),
+        ),
+        "kwin-effect": (
+            home / ".local/share/kwin/effects",
+            Path("/usr/local/share/kwin/effects"),
+            Path("/usr/share/kwin/effects"),
+        ),
+        "color-scheme": (
+            home / ".local/share/color-schemes",
+            Path("/usr/local/share/color-schemes"),
+            Path("/usr/share/color-schemes"),
+        ),
+    }
+    configured_roots = list(roots_by_kind.get(kind, ()))
+    # The resolver normally returns entries under the known XDG/system roots.
+    # Keep the concrete component parent as a narrow additional trust root so
+    # distro-specific/KNewStuff-compatible locations can still preserve sibling
+    # theme symlinks without allowing links to escape into arbitrary home data.
+    configured_roots.append(src.parent)
+    allowed_roots = tuple(dict.fromkeys(root.resolve(strict=False) for root in configured_roots))
+
+    def within_allowed(path: Path) -> bool:
+        try:
+            resolved = path.resolve(strict=True)
+        except OSError:
+            return False
+        for root in allowed_roots:
+            try:
+                resolved.relative_to(root)
+                return True
+            except ValueError:
+                continue
+        return False
+
+    captured: list[CapturedFile] = []
+
+    def copy_node(node: Path, target: Path, stack: tuple[Path, ...]) -> None:
+        try:
+            resolved = node.resolve(strict=True)
+        except OSError:
+            excluded.append(f"{node} (broken appearance symlink/path)")
+            return
+        if not within_allowed(resolved):
+            excluded.append(f"{node} (appearance symlink escapes trusted roots)")
+            return
+        if path_is_sensitive(resolved):
+            excluded.append(str(node).replace(str(home), "{{HOME}}", 1))
+            return
+        if resolved in stack:
+            excluded.append(f"{node} (appearance symlink loop)")
+            return
+
+        if resolved.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+            try:
+                children = sorted(resolved.iterdir(), key=lambda item: item.name.casefold())
+            except OSError:
+                return
+            next_stack = stack + (resolved,)
+            for child in children:
+                copy_node(child, target / child.name, next_stack)
+            return
+        if not resolved.is_file():
+            excluded.append(f"{node} (unsupported appearance object)")
+            return
+        try:
+            if resolved.stat().st_size > 64 * 1024 * 1024:
+                excluded.append(f"{node} (over 64 MiB)")
+                return
+        except OSError:
+            return
+        captured.append(_copy_file(resolved, target, home, "appearance-component"))
+
+    if src.exists() or src.is_symlink():
+        copy_node(src, destination, ())
+    return captured
 
 
 def _portable_home_path(path: Path, home: Path) -> str:
@@ -1436,6 +1664,93 @@ def _copy_visible_desktop_launcher(
     # /usr/share/applications. _copy_file records the resolved source path but
     # the destination remains the localized desktop directory.
     return captured
+
+def _appearance_library_entries(
+    home: Path,
+    active_components: list[dict[str, object]] | None = None,
+) -> list[tuple[str, Path, Path]]:
+    """Return user-installed/manual appearance packages visible in KDE settings.
+
+    Active-only mode still needs to reproduce the *visible appearance library*:
+    KDE Store installs usually live in user XDG roots, while install scripts can
+    place themes under /usr/local or unpackaged /usr/share entries. Distro-owned
+    defaults are already supplied by the Native Pardus base and are not copied.
+    """
+    specs: list[tuple[str, Path, Path, bool]] = [
+        ("icon-theme", home / ".local/share/icons", Path(".local/share/icons"), True),
+        ("icon-theme", home / ".icons", Path(".local/share/icons"), True),
+        ("plasma-theme", home / ".local/share/plasma/desktoptheme", Path(".local/share/plasma/desktoptheme"), True),
+        ("look-and-feel", home / ".local/share/plasma/look-and-feel", Path(".local/share/plasma/look-and-feel"), True),
+        ("color-scheme", home / ".local/share/color-schemes", Path(".local/share/color-schemes"), True),
+        ("window-decoration", home / ".local/share/aurorae/themes", Path(".local/share/aurorae/themes"), True),
+        ("window-decoration", home / ".local/share/kwin/decorations", Path(".local/share/kwin/decorations"), True),
+        ("gtk-theme", home / ".local/share/themes", Path(".local/share/themes"), True),
+        ("gtk-theme", home / ".themes", Path(".local/share/themes"), True),
+        ("kvantum-theme", home / ".local/share/Kvantum", Path(".local/share/Kvantum"), True),
+        ("kvantum-theme", home / ".config/Kvantum", Path(".config/Kvantum"), True),
+        ("icon-theme", Path("/usr/local/share/icons"), Path(".local/share/icons"), True),
+        ("plasma-theme", Path("/usr/local/share/plasma/desktoptheme"), Path(".local/share/plasma/desktoptheme"), True),
+        ("look-and-feel", Path("/usr/local/share/plasma/look-and-feel"), Path(".local/share/plasma/look-and-feel"), True),
+        ("color-scheme", Path("/usr/local/share/color-schemes"), Path(".local/share/color-schemes"), True),
+        ("window-decoration", Path("/usr/local/share/aurorae/themes"), Path(".local/share/aurorae/themes"), True),
+        ("gtk-theme", Path("/usr/local/share/themes"), Path(".local/share/themes"), True),
+        # /usr/share entries are copied only when no distro package owns them.
+        ("icon-theme", Path("/usr/share/icons"), Path(".local/share/icons"), False),
+        ("plasma-theme", Path("/usr/share/plasma/desktoptheme"), Path(".local/share/plasma/desktoptheme"), False),
+        ("look-and-feel", Path("/usr/share/plasma/look-and-feel"), Path(".local/share/plasma/look-and-feel"), False),
+        ("color-scheme", Path("/usr/share/color-schemes"), Path(".local/share/color-schemes"), False),
+        ("window-decoration", Path("/usr/share/aurorae/themes"), Path(".local/share/aurorae/themes"), False),
+        ("gtk-theme", Path("/usr/share/themes"), Path(".local/share/themes"), False),
+    ]
+    family_prefixes: set[str] = set()
+    for component in active_components or []:
+        raw = str(component.get("name") or "").strip().casefold()
+        if not raw:
+            continue
+        first = re.split(r"[-_.\s]+", raw, maxsplit=1)[0]
+        normalized = re.sub(r"[^a-z0-9]+", "", first.casefold())
+        if len(normalized) >= 3:
+            family_prefixes.add(normalized)
+
+    result: list[tuple[str, Path, Path]] = []
+    seen_targets: set[Path] = set()
+    for kind, root, target_root, always in specs:
+        if not root.is_dir():
+            continue
+        try:
+            entries = sorted(root.iterdir(), key=lambda item: item.name.casefold())
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.name.startswith("."):
+                continue
+            if kind == "color-scheme":
+                if not entry.is_file() or entry.suffix != ".colors":
+                    continue
+            elif not (entry.is_dir() or entry.is_symlink()):
+                continue
+            # hicolor contains application-export icons and is already captured
+            # by the dedicated launcher/icon path; avoid duplicating it here.
+            if kind == "icon-theme" and entry.name == "hicolor":
+                continue
+            if not always:
+                # System /usr/share can contain hundreds of distro themes. Only
+                # inspect manual packages that belong to a family currently in
+                # use (e.g. Tela-* / Nordic-*); the native base already owns the
+                # rest. This keeps capture deterministic and fast.
+                normalized_entry = re.sub(r"[^a-z0-9]+", "", (entry.stem if entry.is_file() else entry.name).casefold())
+                if not family_prefixes or not any(normalized_entry.startswith(prefix) for prefix in family_prefixes):
+                    continue
+                probe = ownership_probe(entry)
+                if package_owner(probe) is not None:
+                    continue
+            target = target_root / entry.name
+            if target in seen_targets:
+                continue
+            seen_targets.add(target)
+            result.append((kind, entry, target))
+    return result
+
 
 def _active_only_always_roots(home: Path) -> list[Path]:
     """User state retained even when inactive theme collections are pruned.
@@ -1844,6 +2159,15 @@ def capture_profile(
             captured_assets.extend(_copy_tree(src, payload_home, home, "desktop-asset", excluded))
         reference_roots.extend(always_roots)
 
+        # The list of installed KDE Store/manual themes is itself visible state
+        # (System Settings -> Colors & Themes). Preserve user/manual packages,
+        # while leaving distro-owned defaults to the native Pardus base.
+        for kind, src, target_relative in _appearance_library_entries(home, active_components):
+            captured_assets.extend(
+                _copy_component(src, payload_home, target_relative, home, excluded, kind)
+            )
+            reference_roots.append(src)
+
     # Capture the visible XDG desktop surface (Desktop/Masaüstü/etc.) without
     # embedding arbitrary personal documents.  Application/link launchers are
     # part of the user-visible desktop and must survive cross-distro restore.
@@ -1987,8 +2311,19 @@ def capture_profile(
         local = next((path for path in user_paths if path.exists()), None)
         if local is not None:
             if asset_mode == "active":
+                try:
+                    local_target = local.relative_to(home)
+                except ValueError:
+                    local_target = Path(".local/share/linux-iso/appearance") / local.name
                 captured_assets.extend(
-                    _copy_local_entry(local, payload_home, home, "appearance-component", excluded)
+                    _copy_component(
+                        local,
+                        payload_home,
+                        local_target,
+                        home,
+                        excluded,
+                        kind,
+                    )
                 )
             reference_roots.append(local)
             detail: dict[str, object] = {
@@ -2049,7 +2384,7 @@ def capture_profile(
             # well; user-local KDE assets override distro defaults while the package
             # remains required for any runtime dependencies it may provide.
             captured_assets.extend(
-                _copy_component(system_path, payload_home, target_relative, home, excluded)
+                _copy_component(system_path, payload_home, target_relative, home, excluded, kind)
             )
             detail = {
                 "kind": kind,
@@ -2066,7 +2401,7 @@ def capture_profile(
             component_details.append(detail)
         else:
             captured_assets.extend(
-                _copy_component(system_path, payload_home, target_relative, home, excluded)
+                _copy_component(system_path, payload_home, target_relative, home, excluded, kind)
             )
             detail = {
                 "kind": kind,
@@ -2199,10 +2534,10 @@ def capture_profile(
         ],
     }
 
-    system_visual = _capture_system_visual_fidelity(output, home)
+    system_visual = _capture_system_visual_fidelity(output, home, component_details)
     source_info = _capture_source_branding(output, collect_system_info())
     visible_wallpaper = runtime_visible_wallpaper or _captured_visible_wallpaper(payload_home)
-    slideshow_state = _captured_slideshow_state(payload_home)
+    slideshow_state = _captured_slideshow_state(payload_home, runtime_wallpaper_states)
 
     manifest = Manifest(
         schema_version=1,
@@ -2217,7 +2552,7 @@ def capture_profile(
             "application_install_mode": "online-selective",
             "profile_version": __version__,
             "asset_mode": asset_mode,
-            "fidelity_schema": 11,
+            "fidelity_schema": 12,
             "visible_wallpaper": visible_wallpaper,
             "slideshow": slideshow_state,
             "system_visual": system_visual,

@@ -67,10 +67,10 @@ def _write_helper(tmp_path: Path) -> Path:
 
 
 def test_v060_version_and_acceptance_plan_include_vendor_archive():
-    assert __version__ == "0.6.2"
+    assert __version__ == "0.6.3"
     for path in (Path("scripts/retry-native-acceptance.sh"), Path("scripts/native-acceptance.sh")):
         text = path.read_text(encoding="utf-8")
-        assert "v0.6.2" in text
+        assert "v0.6.3" in text
         assert '("Vendor archive", "vendor_archive_apps")' in text
 
 

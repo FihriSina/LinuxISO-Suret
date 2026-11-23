@@ -6,7 +6,7 @@
 
 ## Native ISO Mode (recommended)
 
-Suret v0.6.2 can remaster a user-supplied distro ISO instead of rebuilding the desktop on an Ubuntu/Kubuntu base. Pardus 25 live ISOs are the first build-capable adapter.
+Suret v0.6.3 can remaster a user-supplied distro ISO instead of rebuilding the desktop on an Ubuntu/Kubuntu base. Pardus 25 live ISOs are the first build-capable adapter.
 
 ```bash
 uv run linux-iso probe-iso ~/Downloads/Pardus-25.2-XFCE-amd64.iso
@@ -24,7 +24,18 @@ This preserves the existing verified profile and rebuilds only the native ISO pa
 A KDE profile on a Pardus XFCE ISO installs KDE inside Pardus, embeds the captured profile, installs source applications when resolvable, preserves the Pardus bootloader/installer/repositories, and repacks the ISO. Generic KIWI mode remains available through `stage-iso` / `build-iso`.
 
 
-## Current milestone: v0.6.2
+## Current milestone: v0.6.3
+
+### v0.6.3: complete KDE appearance, SDDM and slideshow convergence
+
+- Preserves symlink-heavy third-party icon/theme packages as exact inert bundles instead of silently dropping linked icon assets.
+- Preserves the user-visible KDE Store/manual appearance library in active mode while leaving distro-owned defaults to Pardus.
+- Re-applies the active icon theme, color scheme and Plasma theme after the Plasma session starts without applying LookAndFeel packages that could reset panel/widget layout.
+- Mirrors KDE SDDM Plasma-settings synchronization into the dedicated `sddm` user and promotes the exact captured visual assets required before login.
+- Re-runs system-visual convergence once on the first real boot before SDDM, closing installer post-processing overrides.
+- Stores per-desktop slideshow settings and re-applies `org.kde.slideshow` through Plasma DBus after login.
+- Fidelity schema is now v12; one fresh capture is required from older profiles.
+- Current regression suite: 255 tests.
 
 ### v0.6.2: SDDM + Plasma slideshow fidelity
 

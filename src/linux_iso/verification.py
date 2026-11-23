@@ -134,9 +134,9 @@ def verify_profile(profile: Path) -> VerificationResult:
         fidelity_schema = int(restore.get("fidelity_schema", 0) or 0)
     except (TypeError, ValueError):
         fidelity_schema = 0
-    if fidelity_schema < 11:
+    if fidelity_schema < 12:
         warnings.append(
-            "Profile predates SDDM/slideshow fidelity capture v11; re-run 'linux-iso scan' before the next ISO build "
+            "Profile predates complete appearance/SDDM/slideshow fidelity capture v12; re-run 'linux-iso scan' before the next ISO build "
             "to preserve the selected login-screen theme/background and native Plasma slideshow behavior."
         )
     stats: dict[str, int | str] = {
@@ -332,7 +332,7 @@ def verify_profile(profile: Path) -> VerificationResult:
                             f"Strict-fidelity wallpaper reference was not made portable: {decoded}"
                         )
 
-    if fidelity_schema >= 11:
+    if fidelity_schema >= 12:
         slideshow = restore.get("slideshow") or {}
         if isinstance(slideshow, dict) and slideshow.get("active"):
             slide_paths = slideshow.get("paths") or []
@@ -358,6 +358,37 @@ def verify_profile(profile: Path) -> VerificationResult:
                         )
                 if image_count == 0:
                     errors.append("Slideshow is active but the captured collections contain no images.")
+
+        if isinstance(slideshow, dict) and slideshow.get("active"):
+            entries = slideshow.get("entries") or []
+            if not isinstance(entries, list) or not entries:
+                errors.append("Slideshow is active but no per-containment runtime state was captured.")
+            else:
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        errors.append("Slideshow containment metadata is invalid.")
+                        continue
+                    settings = entry.get("settings") or {}
+                    if not isinstance(settings, dict) or not settings.get("SlidePaths"):
+                        errors.append("Slideshow containment is missing its SlidePaths setting.")
+
+        for component in desktop.get("component_details", []):
+            if not isinstance(component, dict) or component.get("inherited"):
+                continue
+            if component.get("kind") != "icon-theme" or not component.get("bundled"):
+                continue
+            root = _payload_path(profile, str(component.get("bundle_root") or ""), placeholder)
+            if root is None or not root.is_dir():
+                errors.append(f"Active icon-theme bundle root is missing: {component.get('name')}")
+                continue
+            if not (root / "index.theme").is_file():
+                errors.append(f"Active icon-theme bundle lacks index.theme: {component.get('name')}")
+            try:
+                icon_files = sum(1 for item in root.rglob("*") if item.is_file())
+            except OSError:
+                icon_files = 0
+            if icon_files < 2:
+                errors.append(f"Active icon-theme bundle is implausibly empty: {component.get('name')}")
 
         visual_path = profile / "system-visual.json"
         if visual_path.is_file():

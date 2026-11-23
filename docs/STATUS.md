@@ -1,8 +1,18 @@
 # Current status
 
-**Current release: v0.6.2 - SDDM and Plasma Slideshow Fidelity**
+**Current release: v0.6.3 - Complete KDE Appearance Convergence**
 
 The Pardus Native path now preserves two visual states that previously diverged after a successful install: KDE Store SDDM login themes with user-selected external backgrounds, and Plasma slideshow desktops with their original collections/timing instead of a forced static first image.
+
+## v0.6.3 implemented
+
+- Safe symlink closure for active icon/Plasma/LookAndFeel/cursor/window/GTK/Kvantum appearance packages; profile payload remains symlink-free.
+- User-installed KDE Store/manual appearance library preservation, including Tela/Nordic-style variants visible in System Settings.
+- Runtime re-application of icon theme, color scheme and Plasma theme without resetting the global desktop layout.
+- KDE-style SDDM account synchronization (`kdeglobals`, `plasmarc`, `kcminputrc`, display/font state), system-readable active assets, and first-boot pre-display-manager re-application.
+- Per-desktop slideshow schema with runtime DBus convergence after Plasma starts.
+- Fidelity schema 12; pre-v12 real profiles require one fresh capture.
+- 255 regression tests plus generated-helper/staging syntax validation.
 
 ## v0.6.2 implemented
 

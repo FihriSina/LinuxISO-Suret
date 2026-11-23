@@ -8,7 +8,7 @@ from linux_iso.capture import capture_profile
 from linux_iso.verification import verify_profile
 
 
-def test_active_only_capture_prunes_inactive_icon_theme_and_unused_plasmoid(tmp_path: Path, monkeypatch):
+def test_active_only_capture_preserves_visible_icon_library_but_prunes_unused_plasmoid(tmp_path: Path, monkeypatch):
     import linux_iso.capture as capture
 
     home = tmp_path / "home"
@@ -48,7 +48,7 @@ def test_active_only_capture_prunes_inactive_icon_theme_and_unused_plasmoid(tmp_
 
     assert any("/.local/share/icons/ActiveIcons/" in item for item in destinations)
     assert any("/.local/share/icons/BaseIcons/" in item for item in destinations)
-    assert not any("/.local/share/icons/UnusedIcons/" in item for item in destinations)
+    assert any("/.local/share/icons/UnusedIcons/" in item for item in destinations)
     assert any("/.local/share/plasma/plasmoids/UsedWidget/" in item for item in destinations)
     assert not any("/.local/share/plasma/plasmoids/UnusedWidget/" in item for item in destinations)
     assert manifest.restore["asset_mode"] == "active"

@@ -740,8 +740,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 PROFILE = Path("/usr/share/linux-iso/profile")
@@ -751,14 +753,19 @@ LIVE_TARGET_USER = Path("/run/linux-iso/target-user")
 MARKER = Path.home() / ".local/state/linux-iso/native-profile-v1.done"
 PRELOGIN_MARKER = Path.home() / ".local/state/linux-iso/native-prelogin-v1.done"
 TEXT_SUFFIXES = {"", ".conf", ".ini", ".rc", ".list", ".desktop", ".profile", ".toml", ".fish", ".zsh", ".bash", ".json", ".xml", ".qml"}
+SAFE_COMPONENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._+@()'&-]{0,127}$")
+
+
+def state_data() -> dict[str, object]:
+    try:
+        raw = json.loads(STATE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
 
 
 def profile_fingerprint() -> str:
-    try:
-        data = json.loads(STATE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return "legacy"
-    return str(data.get("profile_fingerprint") or "legacy")
+    return str(state_data().get("profile_fingerprint") or "legacy")
 
 
 def marker_matches(path: Path, fingerprint: str) -> bool:
@@ -780,11 +787,18 @@ def rewrite_home(path: Path, home: Path) -> None:
         path.write_text(updated, encoding="utf-8")
 
 
-def run(command: list[str]) -> None:
+def run(command: list[str], timeout: int = 30) -> bool:
     try:
-        subprocess.run(command, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        proc = subprocess.run(
+            command,
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+        )
     except (OSError, subprocess.TimeoutExpired):
-        pass
+        return False
+    return proc.returncode == 0
 
 
 def is_target_user() -> bool:
@@ -795,9 +809,6 @@ def is_target_user() -> bool:
                 return marker.read_text(encoding="utf-8").strip() == username
             except OSError:
                 return False
-    # Fallback if the pre-login service did not get a chance to persist the
-    # target marker: only the lowest eligible local interactive UID may apply
-    # the machine profile. Never fan the profile out to every account.
     try:
         import pwd
         candidates = [
@@ -826,19 +837,117 @@ def safe_destination(home: Path, rel: Path) -> Path | None:
     return dst
 
 
+def safe_component(value: object) -> str | None:
+    raw = str(value or "").strip()
+    return raw if SAFE_COMPONENT.fullmatch(raw) else None
+
+
+def apply_appearance(data: dict[str, object]) -> None:
+    appearance = data.get("appearance") or {}
+    if not isinstance(appearance, dict):
+        return
+    icon = safe_component(appearance.get("icon-theme"))
+    colors = safe_component(appearance.get("color-scheme"))
+    plasma = safe_component(appearance.get("plasma-theme"))
+
+    # Copying kdeglobals/plasmarc is authoritative; these tools are a runtime
+    # convergence step so the already-running Plasma session immediately adopts
+    # the captured state. Do not apply a global LookAndFeel package here because
+    # it can reset panels, widgets and favorites.
+    if icon:
+        if not run(["plasma-changeicons", icon]):
+            run(["kwriteconfig6", "--file", "kdeglobals", "--group", "Icons", "--key", "Theme", icon])
+    if colors:
+        if not run(["plasma-apply-colorscheme", colors]):
+            run(["kwriteconfig6", "--file", "kdeglobals", "--group", "General", "--key", "ColorScheme", colors])
+    if plasma:
+        if not run(["plasma-apply-desktoptheme", plasma]):
+            run(["kwriteconfig6", "--file", "plasmarc", "--group", "Theme", "--key", "name", plasma])
+
+
+def qdbus_tool() -> str | None:
+    for name in ("qdbus6", "qdbus-qt6", "qdbus"):
+        tool = shutil.which(name)
+        if tool:
+            return tool
+    return None
+
+
+def apply_slideshow(data: dict[str, object], home: Path) -> bool:
+    slideshow = data.get("slideshow") or {}
+    if not isinstance(slideshow, dict) or not slideshow.get("active"):
+        return True
+    entries = slideshow.get("entries") or []
+    if not isinstance(entries, list) or not entries:
+        return False
+
+    portable: list[dict[str, object]] = []
+    for raw in entries:
+        if not isinstance(raw, dict):
+            continue
+        try:
+            screen = int(raw.get("screen", -1))
+        except (TypeError, ValueError):
+            screen = -1
+        settings = raw.get("settings") or {}
+        if not isinstance(settings, dict):
+            continue
+        clean_settings: dict[str, str] = {}
+        for key, value in settings.items():
+            key = str(key or "")
+            value = str(value or "").replace("{{HOME}}", str(home))
+            if not key or len(key) > 128 or len(value) > 16384 or any(ch in key + value for ch in "\r\0"):
+                continue
+            clean_settings[key] = value
+        if clean_settings.get("SlidePaths"):
+            portable.append({"screen": screen, "settings": clean_settings})
+    if not portable:
+        return False
+
+    qdbus = qdbus_tool()
+    if not qdbus:
+        return False
+    payload = json.dumps(portable, ensure_ascii=False)
+    script = (
+        "var entries=" + payload + ";"
+        "var aid=currentActivity(); var ds=desktopsForActivity(aid);"
+        "if (!ds || !ds.length) ds=desktops();"
+        "var used={};"
+        "for (var i=0;i<entries.length;i++){var e=entries[i];var d=null;"
+        "for(var j=0;j<ds.length;j++){if(!used[j] && e.screen>=0 && ds[j].screen===e.screen){d=ds[j];used[j]=true;break;}}"
+        "if(!d){for(var k=0;k<ds.length;k++){if(!used[k]){d=ds[k];used[k]=true;break;}}}"
+        "if(!d) continue; d.wallpaperPlugin='org.kde.slideshow';"
+        "d.currentConfigGroup=['Wallpaper','org.kde.slideshow','General'];"
+        "var keys=Object.keys(e.settings); for(var n=0;n<keys.length;n++){d.writeConfig(keys[n],e.settings[keys[n]]);}}"
+        "'suret-slideshow-ok';"
+    )
+    for _attempt in range(6):
+        try:
+            proc = subprocess.run(
+                [qdbus, "org.kde.plasmashell", "/PlasmaShell", "org.kde.PlasmaShell.evaluateScript", script],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            proc = None
+        if proc is not None and proc.returncode == 0:
+            return True
+        time.sleep(2)
+    return False
+
+
 def main() -> int:
     if not STATE.is_file() or not is_target_user():
         return 0
-    fingerprint = profile_fingerprint()
+    data = state_data()
+    fingerprint = str(data.get("profile_fingerprint") or "legacy")
     if marker_matches(MARKER, fingerprint):
         return 0
     home = Path.home().resolve()
     payload = PROFILE / "payload/home"
 
-    # The system pre-login service normally installs the payload before the
-    # display manager paints the first frame. If that already happened, do not
-    # copy the whole profile again after Plasma starts; only refresh runtime
-    # caches below. This avoids a visible first-login wallpaper/theme jump.
     if not marker_matches(PRELOGIN_MARKER, fingerprint) and payload.is_dir():
         for src in payload.rglob("*"):
             rel = src.relative_to(payload)
@@ -858,6 +967,11 @@ def main() -> int:
 
     run(["kbuildsycoca6"])
     run(["kbuildsycoca5"])
+    apply_appearance(data)
+    slideshow_ok = apply_slideshow(data, home)
+    if not slideshow_ok:
+        return 12
+
     MARKER.parent.mkdir(parents=True, exist_ok=True)
     MARKER.write_text(fingerprint + "\n", encoding="utf-8")
     return 0
@@ -866,6 +980,7 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 '''
+
 
 NATIVE_PRELOGIN = r'''#!/usr/bin/env python3
 from __future__ import annotations
@@ -1058,6 +1173,7 @@ ConditionPathExists=/usr/share/linux-iso/profile/manifest.yaml
 
 [Service]
 Type=oneshot
+ExecStart=/usr/lib/linux-iso/native-system-visual.py --boot
 ExecStart=/usr/lib/linux-iso/native-prelogin.py
 RemainAfterExit=yes
 
@@ -1070,15 +1186,41 @@ NATIVE_SYSTEM_VISUAL = r'''#!/usr/bin/env python3
 from __future__ import annotations
 
 import json
+import os
+import pwd
 import re
 import shlex
 import shutil
 import subprocess
+import sys
 from pathlib import Path, PurePosixPath
 
 PROFILE = Path("/usr/share/linux-iso/profile")
 META = PROFILE / "system-visual.json"
 PAYLOAD = PROFILE / "payload/system"
+RESTORE_STATE = PROFILE / "native-restore.json"
+
+
+def _profile_fingerprint() -> str:
+    try:
+        data = json.loads(RESTORE_STATE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "legacy"
+    return str(data.get("profile_fingerprint") or "legacy") if isinstance(data, dict) else "legacy"
+
+
+def _live_boot() -> bool:
+    if Path("/run/live/medium").exists():
+        return True
+    try:
+        return "boot=live" in Path("/proc/cmdline").read_text(encoding="utf-8", errors="replace").split()
+    except OSError:
+        return False
+
+
+def _boot_marker() -> Path:
+    root = Path("/run/linux-iso") if _live_boot() else Path("/var/lib/linux-iso")
+    return root / "system-visual-v1.done"
 
 
 def clean_ini_value(value: object) -> str | None:
@@ -1127,6 +1269,121 @@ def copy_tree(src: Path, dst: Path) -> bool:
     return True
 
 
+def profile_bundle_path(value: object) -> Path | None:
+    raw = clean_ini_value(value)
+    if raw is None or not raw.startswith("{{HOME}}/"):
+        return None
+    rel = PurePosixPath(raw[len("{{HOME}}/"):])
+    if not rel.parts or ".." in rel.parts:
+        return None
+    path = PROFILE / "payload/home" / Path(*rel.parts)
+    try:
+        path.resolve(strict=False).relative_to((PROFILE / "payload/home").resolve(strict=False))
+    except ValueError:
+        return None
+    return path
+
+
+def _chown_tree(root: Path, uid: int, gid: int) -> None:
+    if not root.exists():
+        return
+    try:
+        os.chown(root, uid, gid, follow_symlinks=False)
+    except OSError:
+        pass
+    if root.is_dir():
+        try:
+            items = list(root.rglob("*"))
+        except OSError:
+            items = []
+        for item in items:
+            try:
+                os.chown(item, uid, gid, follow_symlinks=False)
+            except OSError:
+                pass
+
+
+def _rewrite_placeholder(path: Path, replacement: str) -> None:
+    if not path.is_file():
+        return
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return
+    updated = raw.replace("{{HOME}}", replacement)
+    if updated != raw:
+        path.write_text(updated, encoding="utf-8")
+
+
+def promote_sddm_desktop_assets(sddm: dict[str, object]) -> None:
+    sync = sddm.get("desktop_sync") or {}
+    if not isinstance(sync, dict):
+        return
+    specs = {
+        "icon-theme": Path("/usr/share/icons"),
+        "cursor-theme": Path("/usr/share/icons"),
+        "plasma-theme": Path("/usr/share/plasma/desktoptheme"),
+        "look-and-feel": Path("/usr/share/plasma/look-and-feel"),
+        "color-scheme": Path("/usr/share/color-schemes"),
+    }
+    for kind, target_root in specs.items():
+        item = sync.get(kind) or {}
+        if not isinstance(item, dict) or not item.get("bundled"):
+            continue
+        src = profile_bundle_path(item.get("bundle_root"))
+        if src is None or not src.exists():
+            continue
+        target_root.mkdir(parents=True, exist_ok=True)
+        # Preserve the captured on-disk package/file name. KDE config values
+        # refer to metadata IDs/names, while the package itself can have a
+        # different directory name.
+        copy_tree(src, target_root / src.name)
+
+
+def sync_sddm_account_state() -> None:
+    try:
+        entry = pwd.getpwnam("sddm")
+    except KeyError:
+        return
+    sddm_home = Path(entry.pw_dir or "/var/lib/sddm")
+    config_dst = sddm_home / ".config"
+    config_dst.mkdir(parents=True, exist_ok=True)
+    payload_home = PROFILE / "payload/home"
+    for rel in (
+        Path(".config/kdeglobals"),
+        Path(".config/plasmarc"),
+        Path(".config/kcminputrc"),
+        Path(".config/kwinoutputconfig.json"),
+    ):
+        src = payload_home / rel
+        if not src.is_file():
+            continue
+        dst = sddm_home / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        _rewrite_placeholder(dst, str(sddm_home))
+        _chown_tree(dst, entry.pw_uid, entry.pw_gid)
+
+    for rel in (Path(".config/fontconfig"), Path(".local/share/kscreen")):
+        src = payload_home / rel
+        if not src.is_dir():
+            continue
+        dst = sddm_home / rel
+        copy_tree(src, dst)
+        _chown_tree(dst, entry.pw_uid, entry.pw_gid)
+
+    cache = sddm_home / ".cache"
+    if cache.is_dir() and not cache.is_symlink():
+        try:
+            shutil.rmtree(cache)
+        except OSError:
+            pass
+    _chown_tree(config_dst, entry.pw_uid, entry.pw_gid)
+    local_share = sddm_home / ".local"
+    if local_share.exists():
+        _chown_tree(local_share, entry.pw_uid, entry.pw_gid)
+
+
 def strip_ini_keys(path: Path, section_name: str, keys: set[str]) -> None:
     if not path.is_file():
         return
@@ -1164,6 +1421,15 @@ def neutralize_sddm_theme_overrides() -> None:
 
 
 def main() -> int:
+    boot_mode = "--boot" in sys.argv[1:]
+    marker = _boot_marker()
+    fingerprint = _profile_fingerprint()
+    if boot_mode:
+        try:
+            if marker.is_file() and marker.read_text(encoding="utf-8").strip() == fingerprint:
+                return 0
+        except OSError:
+            pass
     if not META.is_file():
         return 0
     data = json.loads(META.read_text(encoding="utf-8"))
@@ -1196,6 +1462,9 @@ def main() -> int:
 
     sddm = data.get("sddm") or {}
     sddm_settings = sddm.get("settings") or {}
+    if isinstance(sddm, dict):
+        promote_sddm_desktop_assets(sddm)
+        sync_sddm_account_state()
 
     # SDDM runs before a user home is active. Promote the captured active
     # cursor theme and fonts to system-visible locations so the login screen
@@ -1252,6 +1521,9 @@ def main() -> int:
         cfg = Path("/etc/sddm.conf.d/10-suret-source-theme.conf")
         cfg.parent.mkdir(parents=True, exist_ok=True)
         cfg.write_text("\n".join(sddm_lines) + "\n", encoding="utf-8")
+    if boot_mode:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(fingerprint + "\n", encoding="utf-8")
     return 0
 
 
@@ -2413,9 +2685,9 @@ def stage_native_project(
         fidelity_schema = int(restore_meta.get("fidelity_schema") or 0)
     except (TypeError, ValueError):
         fidelity_schema = 0
-    if profile_version and fidelity_schema < 11:
+    if profile_version and fidelity_schema < 12:
         raise NativeIsoError(
-            "This profile predates Suret's SDDM/slideshow fidelity schema. "
+            "This profile predates Suret's complete appearance/SDDM/slideshow fidelity schema. "
             "Run scripts/native-acceptance.sh once to recapture the source profile; "
             "retry mode intentionally refuses to guess whether a legacy static wallpaper was originally a slideshow."
         )
@@ -2493,6 +2765,15 @@ def stage_native_project(
         staged_profile, resolver_ids=set(vendor_archive_apps)
     )
 
+    appearance: dict[str, str] = {}
+    for component in (manifest.get("desktop") or {}).get("component_details", []):
+        if not isinstance(component, dict) or component.get("inherited"):
+            continue
+        kind = str(component.get("kind") or "")
+        name = str(component.get("name") or "").strip()
+        if kind in {"icon-theme", "color-scheme", "plasma-theme", "cursor-theme", "look-and-feel"} and name:
+            appearance.setdefault(kind, name)
+
     state = {
         "mode": "native-iso",
         "suret_version": __version__,
@@ -2516,10 +2797,17 @@ def stage_native_project(
             "slideshow": restore_meta.get("slideshow") or {},
             "sddm": ((restore_meta.get("system_visual") or {}).get("sddm") or {}),
         },
+        "appearance": appearance,
     }
     (output / "native.json").write_text(_safe_json(state), encoding="utf-8")
     (output / "profile/native-restore.json").write_text(
-        _safe_json({"schema": 2, "desktop": desktop, "profile_fingerprint": profile_fingerprint}),
+        _safe_json({
+            "schema": 3,
+            "desktop": desktop,
+            "profile_fingerprint": profile_fingerprint,
+            "appearance": appearance,
+            "slideshow": restore_meta.get("slideshow") or {},
+        }),
         encoding="utf-8",
     )
     (output / "native-first-login.py").write_text(NATIVE_FIRST_LOGIN, encoding="utf-8")

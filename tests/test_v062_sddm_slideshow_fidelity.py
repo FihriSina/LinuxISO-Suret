@@ -265,13 +265,13 @@ def test_v062_stage_refuses_real_legacy_profile_that_lost_slideshow_intent(tmp_p
     try:
         native.stage_native_project(profile, base, tmp_path / "build")
     except native.NativeIsoError as exc:
-        assert "SDDM/slideshow fidelity schema" in str(exc)
+        assert "appearance/SDDM/slideshow fidelity schema" in str(exc)
     else:
         raise AssertionError("legacy real profile should require a one-time recapture")
 
 
 def test_v062_retry_detects_legacy_profile_before_resetting_build_tree():
     retry = Path("scripts/retry-native-acceptance.sh").read_text(encoding="utf-8")
-    assert "fidelity < 11" in retry
+    assert "fidelity < 12" in retry
     assert "native-acceptance.sh BASE_ISO once" in retry
-    assert retry.index("fidelity < 11") < retry.index('phase "Resetting previous Native build state"')
+    assert retry.index("fidelity < 12") < retry.index('phase "Resetting previous Native build state"')

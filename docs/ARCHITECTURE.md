@@ -44,6 +44,9 @@ v0.6.0 adds a code-owned vendor-archive resolver for a narrower case: a genuinel
 
 v0.6.2 raises visual fidelity to schema 11. Plasma slideshow containments retain their original `org.kde.slideshow` plugin, portable `SlidePaths`, interval/order configuration, and captured image directories; the current/most-recent slide is only an initial `Image=` seed. SDDM capture follows SDDM's actual configuration precedence and honors custom `ThemeDir`. User-selected login backgrounds referenced from `theme.conf.user` are copied into a self-contained theme bundle, while arbitrary files and external symlink targets remain excluded. Native restore removes only competing `[Theme]` keys from the base SDDM configuration, installs the captured theme as `suret-source`, and fails closed if the theme cannot be restored. Real profiles captured before schema 11 are not guessed/migrated automatically because older Suret versions intentionally flattened slideshows to static wallpapers.
 
+v0.6.3 raises fidelity to schema 12 and makes the visual state convergent rather than config-copy-only. Appearance-package capture safely dereferences symlinks only inside trusted KDE theme roots, so symlink-heavy icon sets retain their real assets while the profile itself remains inert and symlink-free. Active mode also carries the user-visible KDE Store/manual appearance library. Native first login re-applies icon/color/Plasma theme state after plasmashell exists, and restores slideshow settings through Plasma's scripting DBus interface. SDDM restoration mirrors KDE's own Plasma-settings sync into the dedicated `sddm` account, promotes required user-local assets to system-readable locations, and runs once more before the display manager on the first Live/installed boot to survive installer post-processing.
+
+
 v0.5.4 treats appearance packages as mandatory fidelity dependencies and restores the captured profile to one primary local account only. Live target-user selection is volatile under `/run`; installed target selection is persisted under `/var/lib/linux-iso`. Profile verification rejects symlinks/special files and traversal destinations before root staging. Native output is produced atomically, boot metadata is compared against the base image, and the final ISO receives a SHA-256 checksum before QEMU validation.
 
 ## Secondary path: Generic Build Mode
@@ -58,7 +61,7 @@ This mode is no longer the preferred path when the user wants the resulting syst
 
 ## Capture and profile rules
 
-- Active-only appearance capture remains the default.
+- Active-only appearance capture remains the default, but the visible user-installed appearance library is preserved as part of System Settings fidelity.
 - `verify` validates payload integrity and required appearance dependencies.
 - Source-home paths remain normalized to `{{HOME}}`.
 - Known credential stores and likely secrets remain excluded/redacted.

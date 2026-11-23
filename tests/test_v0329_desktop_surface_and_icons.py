@@ -59,7 +59,7 @@ def test_v0329_captures_localized_visible_desktop_launcher(tmp_path: Path, monke
     profile = tmp_path / "profile"
     manifest = capture_profile(profile, home)
 
-    assert manifest.restore["fidelity_schema"] == 11
+    assert manifest.restore["fidelity_schema"] == 12
     surface = manifest.restore["desktop_surface"]
     assert surface["directory"] == "{{HOME}}/Masaüstü"
     assert surface["launchers"] == ["{{HOME}}/Masaüstü/Bilgisayar.desktop"]

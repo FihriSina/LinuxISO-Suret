@@ -131,7 +131,7 @@ phase() {
 HERE=$(cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$HERE"
 
-echo "== Linux ISO - Suret v0.6.2 Native retry =="
+echo "== Linux ISO - Suret v0.6.3 Native retry =="
 echo "Base ISO: $BASE_ISO"
 echo "Profile:  $PROFILE"
 echo "Build:    $BUILD"
@@ -166,9 +166,9 @@ try:
     fidelity = int(restore.get("fidelity_schema") or 0)
 except (TypeError, ValueError):
     fidelity = 0
-if version and fidelity < 11:
+if version and fidelity < 12:
     raise SystemExit(
-        "Existing profile predates SDDM/slideshow fidelity schema 11.\n"
+        "Existing profile predates complete appearance/SDDM/slideshow fidelity schema 12.\n"
         "Run ./scripts/native-acceptance.sh BASE_ISO once to recapture the source appearance, "
         "then use retry-native-acceptance.sh for later retries."
     )
@@ -201,7 +201,11 @@ sddm = visual.get("sddm") or {}
 if sddm.get("theme_captured"):
     print(f"- SDDM theme: {sddm.get('source_theme') or 'captured'} ({len(sddm.get('external_assets') or [])} external asset(s))")
 slideshow = visual.get("slideshow") or {}
-print(f"- Plasma slideshow: {'active' if slideshow.get('active') else 'inactive'} ({len(slideshow.get('paths') or [])} collection path(s))")
+print(f"- Plasma slideshow: {'active' if slideshow.get('active') else 'inactive'} ({len(slideshow.get('paths') or [])} collection path(s), {len(slideshow.get('entries') or [])} desktop state(s))")
+appearance = meta.get("appearance") or {}
+print(f"- Active icon theme: {appearance.get('icon-theme') or '(none)'}")
+print(f"- Active color scheme: {appearance.get('color-scheme') or '(none)'}")
+print(f"- Active Plasma theme: {appearance.get('plasma-theme') or '(none)'}")
 PYPLAN
 phase "Building Native ISO"
 "$BUILD/build-native.sh"
