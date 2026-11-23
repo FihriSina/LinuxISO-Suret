@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# System administration tools such as chroot may live in /usr/sbin even when
+# an interactive desktop session omits sbin directories from PATH.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+
 # Bootstrap the host-side tools used by Native ISO Mode.
 # This script is intentionally distro-conservative: it auto-installs only on
 # apt-based hosts (Pardus/Debian/Ubuntu family). Other hosts get an exact list.
@@ -15,6 +19,18 @@ declare -A CMD_PKG=(
   [umount]=mount
   [qemu-system-x86_64]=qemu-system-x86
   [qemu-img]=qemu-utils
+  [readlink]=coreutils
+  [stat]=coreutils
+  [df]=coreutils
+  [du]=coreutils
+  [tee]=coreutils
+  [sort]=coreutils
+  [md5sum]=coreutils
+  [sha256sum]=coreutils
+  [find]=findutils
+  [xargs]=findutils
+  [awk]=mawk
+  [grep]=grep
 )
 
 missing_cmds=()
@@ -26,18 +42,21 @@ for cmd in "${!CMD_PKG[@]}"; do
   fi
 done
 
-need_ovmf=0
-for f in \
-  /usr/share/OVMF/OVMF_CODE_4M.fd \
-  /usr/share/OVMF/OVMF_CODE.fd \
-  /usr/share/ovmf/OVMF.fd
+have_ovmf_pair() {
+  local pair code vars
+  for pair in \
+    "/usr/share/OVMF/OVMF_CODE_4M.fd|/usr/share/OVMF/OVMF_VARS_4M.fd" \
+    "/usr/share/OVMF/OVMF_CODE.fd|/usr/share/OVMF/OVMF_VARS.fd" \
+    "/usr/share/ovmf/OVMF.fd|/usr/share/ovmf/OVMF_VARS.fd"
   do
-  if [[ -f "$f" ]]; then
-    need_ovmf=1
-    break
-  fi
-done
-if (( need_ovmf == 0 )); then
+    code=${pair%%|*}
+    vars=${pair#*|}
+    [[ -f "$code" && -f "$vars" ]] && return 0
+  done
+  return 1
+}
+
+if ! have_ovmf_pair; then
   packages+=(ovmf)
 fi
 
@@ -50,6 +69,12 @@ for pkg in "${packages[@]}"; do
     seen[$pkg]=1
   fi
 done
+
+if ! command -v sudo >/dev/null 2>&1; then
+  echo "sudo is required by Native ISO remaster operations but is not available." >&2
+  echo "Install the sudo package (or provide sudo on PATH), then rerun Native acceptance." >&2
+  exit 2
+fi
 
 if (( ${#unique_packages[@]} == 0 )); then
   echo "Native host dependencies: OK"
@@ -72,11 +97,6 @@ if ! command -v apt-get >/dev/null 2>&1; then
   exit 2
 fi
 
-if ! command -v sudo >/dev/null 2>&1; then
-  echo "sudo is required to install missing Native ISO host dependencies." >&2
-  exit 2
-fi
-
 echo "Installing missing Native ISO host dependencies..."
 sudo -v
 # Prefer the existing APT metadata for speed. Refresh only when the first
@@ -92,16 +112,8 @@ failed=()
 for cmd in "${!CMD_PKG[@]}"; do
   command -v "$cmd" >/dev/null 2>&1 || failed+=("$cmd")
 done
-ovmf_ok=0
-for f in \
-  /usr/share/OVMF/OVMF_CODE_4M.fd \
-  /usr/share/OVMF/OVMF_CODE.fd \
-  /usr/share/ovmf/OVMF.fd
-  do
-  [[ -f "$f" ]] && ovmf_ok=1 && break
-done
-if (( ovmf_ok == 0 )); then
-  failed+=("OVMF firmware")
+if ! have_ovmf_pair; then
+  failed+=("OVMF CODE/VARS firmware pair")
 fi
 
 if (( ${#failed[@]} > 0 )); then

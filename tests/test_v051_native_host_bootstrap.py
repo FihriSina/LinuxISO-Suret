@@ -7,7 +7,7 @@ def test_v051_native_acceptance_bootstraps_before_probe():
     sync = script.index("uv sync")
     probe = script.index('uv run linux-iso probe-iso "$BASE_ISO"')
     assert bootstrap < sync < probe
-    assert "v0.5.1 Native ISO acceptance" in script
+    assert "Native ISO acceptance" in script
 
 
 def test_v051_bootstrap_covers_full_native_toolchain():
@@ -42,5 +42,7 @@ def test_v051_retry_native_reuses_profile_and_bootstraps():
     assert 'bootstrap-native-host.sh' in script
     assert 'uv run linux-iso verify "$PROFILE"' in script
     assert 'uv run linux-iso scan' not in script
-    assert 'rm -rf "$BUILD" "$RESULT"' in script
+    assert 'reset_native_dir "$BUILD" build' in script
+    assert 'reset_native_dir "$RESULT" result' in script
+    assert 'guard_reset_dir "$target"' in script
     assert 'uv run linux-iso stage-native "$PROFILE" "$BASE_ISO"' in script

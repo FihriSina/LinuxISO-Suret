@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import unquote
 
@@ -51,6 +51,8 @@ class VerificationResult:
 
 def _load_manifest(profile: Path) -> dict[str, Any]:
     path = profile / "manifest.yaml"
+    if path.is_symlink():
+        raise ValueError(f"Profile manifest must not be a symbolic link: {path}")
     if not path.is_file():
         raise FileNotFoundError(f"Missing profile manifest: {path}")
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -62,7 +64,27 @@ def _payload_path(profile: Path, destination: str, placeholder: str) -> Path | N
         return profile / "payload/home"
     if not destination.startswith(prefix):
         return None
-    return profile / "payload/home" / destination[len(prefix) :]
+    relative = destination[len(prefix) :]
+    # Manifest destinations are portable POSIX-style home-relative paths.
+    # Reject traversal instead of allowing `payload/home/../../...` to make
+    # verification inspect arbitrary host files.
+    parts = PurePosixPath(relative).parts
+    if not relative or relative.startswith("/") or ".." in parts:
+        return None
+    return profile / "payload/home" / Path(*parts)
+
+
+def _has_symlink_component(root: Path, path: Path) -> bool:
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return True
+    current = root
+    for part in rel.parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
 
 
 def _bundle_has_payload(destinations: set[str], root: str) -> bool:
@@ -72,7 +94,10 @@ def _bundle_has_payload(destinations: set[str], root: str) -> bool:
 
 def verify_profile(profile: Path) -> VerificationResult:
     profile = profile.expanduser().resolve()
-    manifest = _load_manifest(profile)
+    try:
+        manifest = _load_manifest(profile)
+    except (FileNotFoundError, OSError, ValueError, yaml.YAMLError) as exc:
+        return VerificationResult(ok=False, errors=[str(exc)])
     desktop = manifest.get("desktop", {})
     restore = manifest.get("restore", {})
     placeholder = restore.get("home_placeholder", "{{HOME}}")
@@ -80,6 +105,30 @@ def verify_profile(profile: Path) -> VerificationResult:
 
     warnings: list[str] = []
     errors: list[str] = []
+
+    # A captured profile is an inert data bundle: regular files/directories
+    # only. Reject symlinks and special files anywhere in it so later root
+    # staging cannot follow a crafted link into host/rootfs secrets or block on
+    # a FIFO/device. Capture itself never intentionally emits these objects.
+    profile_symlinks: list[Path] = []
+    profile_special: list[Path] = []
+    try:
+        for candidate in profile.rglob("*"):
+            if candidate.is_symlink():
+                profile_symlinks.append(candidate)
+            elif not candidate.is_file() and not candidate.is_dir():
+                profile_special.append(candidate)
+    except OSError as exc:
+        errors.append(f"Could not inspect profile filesystem objects: {exc}")
+    if profile_symlinks:
+        preview = ", ".join(str(path.relative_to(profile)) for path in profile_symlinks[:5])
+        suffix = " ..." if len(profile_symlinks) > 5 else ""
+        errors.append(f"Profile contains unsupported symbolic link(s): {preview}{suffix}")
+    if profile_special:
+        preview = ", ".join(str(path.relative_to(profile)) for path in profile_special[:5])
+        suffix = " ..." if len(profile_special) > 5 else ""
+        errors.append(f"Profile contains unsupported special file(s): {preview}{suffix}")
+
     try:
         fidelity_schema = int(restore.get("fidelity_schema", 0) or 0)
     except (TypeError, ValueError):
@@ -117,6 +166,9 @@ def verify_profile(profile: Path) -> VerificationResult:
         path = _payload_path(profile, destination, placeholder)
         if path is None:
             errors.append(f"Non-portable payload destination: {destination}")
+            continue
+        if _has_symlink_component(payload_root, path):
+            errors.append(f"Payload destination traverses a symbolic link: {destination}")
             continue
         if not path.is_file():
             errors.append(f"Missing payload file: {destination}")

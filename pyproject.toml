@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "linux-iso"
-version = "0.5.1"
+version = "0.6.0"
 description = "Linux ISO - Suret: capture, rebuild and install a personalized Linux desktop."
 readme = "README.md"
 requires-python = ">=3.11"

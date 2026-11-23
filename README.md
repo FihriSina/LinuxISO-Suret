@@ -6,7 +6,7 @@
 
 ## Native ISO Mode (recommended)
 
-Suret v0.5.1 can remaster a user-supplied distro ISO instead of rebuilding the desktop on an Ubuntu/Kubuntu base. Pardus 25 live ISOs are the first build-capable adapter.
+Suret v0.6.0 can remaster a user-supplied distro ISO instead of rebuilding the desktop on an Ubuntu/Kubuntu base. Pardus 25 live ISOs are the first build-capable adapter.
 
 ```bash
 uv run linux-iso probe-iso ~/Downloads/Pardus-25.2-XFCE-amd64.iso
@@ -24,7 +24,80 @@ This preserves the existing verified profile and rebuilds only the native ISO pa
 A KDE profile on a Pardus XFCE ISO installs KDE inside Pardus, embeds the captured profile, installs source applications when resolvable, preserves the Pardus bootloader/installer/repositories, and repacks the ISO. Generic KIWI mode remains available through `stage-iso` / `build-iso`.
 
 
-## Current milestone: v0.5.1
+## Current milestone: v0.6.0
+
+### v0.6.0: Android Studio vendor-archive resolver + extra-data escape hatch
+
+- Moves a genuinely captured `com.google.AndroidStudio` Flatpak out of the Pardus 25 Flatpak 1.16.5 `extra-data/apply_extra` path that fails on `/proc/self/fd/N`.
+- Resolves Android Studio only through a compiled Suret allow-list, downloads the official Linux archive from Google-owned hosts, pairs it with the SHA-256 published on Android Developers, and verifies the hash before extraction.
+- Extracts only an `android-studio/` tree; absolute/traversal paths, escaping links, device/FIFO entries, and setuid/setgid archive modes are rejected.
+- Installs the IDE under `/opt/android-studio`, creates a real `com.google.AndroidStudio.desktop`, and rewrites only the matching captured Flatpak launcher; unrelated `TryExec=flatpak` entries are untouched.
+- Uses disk-backed `/var/tmp/linux-iso-vendor` for the ~GB vendor archive instead of the chroot `/run` tmpfs, and removes the temporary download after successful installation.
+- If Android Studio was the only genuine Flatpak, the rendered Native plan contains no Flatpak apps and the Flatpak/bubblewrap runtime path is skipped entirely.
+- Current regression suite: 228 tests.
+
+### v0.5.9: Vendor-native Code/Signal resolution + conditional Flatpak
+
+- Keeps captured APT applications on an APT-native path when Suret has a vetted official vendor resolver: VS Code uses Microsoft's official repository and Signal Desktop uses Signal's official repository.
+- Restores the captured native `Exec=` command for those launchers instead of leaving a `flatpak run ...` translation after the vendor-native package is installed.
+- Vendor repository metadata is a compiled Suret allow-list; profile data cannot inject arbitrary repositories, keys or package names. No Debian/Ubuntu/PPA repository is mixed into Pardus.
+- True Flatpak captures remain Flatpak, but Flatpak/bubblewrap are now installed only when the profile actually requires them.
+- Logs Flatpak/bubblewrap versions and diagnoses the upstream Flatpak 1.16.5 `/proc/self/fd` regression without pulling a foreign-distro package to fix it.
+- Retains v0.5.8 GPU isolation and fail-closed Flatpak deployment gates for genuine Flatpak applications.
+- Current regression suite: 220 tests.
+
+### v0.5.8: Flatpak extra-data sandbox + host-hardware isolation
+
+- Makes the Native chroot root a real self bind-mount so bubblewrap can change recursive mount propagation instead of failing with `Failed to make / slave: Invalid argument`.
+- Supports Flatpak `extra-data` installers when Pardus blocks unprivileged user namespaces by using bubblewrap's setuid fallback only inside a sealed `root:root 0700` disposable work window; the privilege bit is removed before the work tree is exposed or the ISO is repacked.
+- Forces build-time locale to `C.UTF-8`, eliminating inherited `tr_TR`/`en_US` locale warnings without changing the captured target-user locale.
+- Forces `FLATPAK_GL_DRIVERS=default` and masks host `/proc/modules` + `/sys/module` during the chroot package phase so host NVIDIA/AMD driver state cannot select target Flatpak runtime extensions.
+- Adds fail-closed gates for undeployed required Flatpak apps and host-specific GPU runtimes.
+- Current regression suite: 213 tests.
+
+### v0.5.7: Root-owned Native retry cleanup
+
+- Recovers automatically from root-owned `unsquashfs`/chroot work trees left by failed Native builds.
+- Detaches stale `run/sys/proc/dev` mounts before privileged cleanup and uses `rm --one-file-system` to prevent crossing mount boundaries.
+- Adds a user-owned Suret staging marker for safe privileged cleanup of custom Native build paths; the default build path remains recoverable for pre-marker releases.
+- Direct generated-build reruns use the same mount-safe work reset.
+- Current regression suite: 206 tests.
+
+### v0.5.6: Native APT media isolation
+
+- Fixes Pardus 25.2 Native `apt-get update` exit 100 caused by the live-only `file:/run/live/medium` repository inside the chroot.
+- Uses an isolated build-only APT source list and package-index state under `/run/linux-iso/apt-build`; the ISO's original live/installer APT configuration is preserved byte-for-byte.
+- Uses only official Pardus 25 `yirmibes`, `yirmibes-deb`, and security repositories during Native package installation.
+- Disables build-time translation/Contents indexes to reduce unnecessary metadata traffic.
+- All APT availability checks and installs share the same isolated source configuration.
+- Current regression suite: 200 tests.
+
+### v0.5.5: Native acceptance guard fix
+
+- Fixes a `set -e` interaction that made valid Native acceptance/retry layouts exit silently immediately after the `Result:` line.
+- Rewrites Native path-overlap guards as explicit conditionals and returns success explicitly for safe layouts.
+- Adds visible phase markers around each long Native acceptance stage for deterministic failure localization.
+- Keeps all v0.5.4 deep-hardening behavior intact.
+- Current regression suite: 196 tests.
+
+### v0.5.4: Native deep hardening
+
+- Makes source appearance packages mandatory Native install dependencies instead of silently skipping them.
+- Applies the captured profile to one primary local account only, with volatile live-user state and fingerprinted convergence markers.
+- Hardens profile/capture safety against symlink traversal, special files, credential-store paths, generic text secrets, and credential-bearing launcher commands.
+- Adds generated-template gates, complete host helper checks, post-install disk-space modeling, destructive path-overlap guards, automatic successful-work cleanup, and relocatable ISO SHA-256 output.
+- QEMU now opens the exact expected Native ISO and validates its checksum before boot.
+- Keeps v0.5.3 xorriso 1.5.6 selective mapping and v0.5.2 chroot/boot/profile gates intact.
+- Current regression suite: 192 tests.
+
+### v0.5.3: Native xorriso/PATH compatibility + remaster hardening
+
+- Normalizes system sbin paths before dependency probing and generated Native builds, fixing false `chroot`-missing reports when `/usr/sbin` is absent from a desktop user's PATH.
+- Uses xorriso-native `-find ... -exec echo --` traversal rather than shell-find `-print`, matching the xorriso 1.5.6 shipped on the tested Pardus host.
+- Avoids xorriso 1.5.6's known boot replay failure by no longer remapping the complete extracted ISO tree. Only the rebuilt squashfs and changed live metadata are mapped back; boot-image files remain authoritative from the loaded base ISO.
+- Retains the v0.5.2 hardening: isolated chroot `/run`, `policy-rc.d`, required KDE/SDDM gates, pre-SDDM profile convergence, refreshed live metadata, compatible OVMF pairing, and source/base architecture + Pardus major-release checks.
+- Keeps Pardus 25 official repository identity intact; no cross-distro repositories are introduced.
+- Current regression suite: 168 tests.
 
 
 ### v0.5.1: Native host dependency bootstrap
@@ -435,3 +508,7 @@ For a reproducible local test command, use:
 ```
 
 The helper clears uv group-suppression flags, explicitly syncs the development dependency group, and runs pytest through `python -m pytest` so testing does not depend on a generated console-entrypoint file. If the project `.venv` becomes stale or partially damaged, run `./scripts/repair-env.sh`.
+
+## Native compatibility note (v0.5.3)
+
+Pardus hosts shipping xorriso 1.5.6 are supported. Suret uses xorriso-native `-find ... -exec echo --` syntax and selectively replaces only remastered live payload files, leaving base ISO boot-image files untouched before boot replay. Native acceptance also normalizes sbin paths so installed tools such as `/usr/sbin/chroot` are detected reliably.

@@ -33,7 +33,7 @@ from linux_iso.desktop.kde import (
 )
 from linux_iso.models import CapturedFile, DesktopProfile, Manifest, Package
 from linux_iso.packages.inventory import collect_packages
-from linux_iso.security.sanitizer import path_is_sensitive, sanitize_shell_text
+from linux_iso.security.sanitizer import path_is_sensitive, sanitize_desktop_text, sanitize_shell_text
 from linux_iso.system import collect_system_info, detect_desktop
 
 
@@ -137,18 +137,32 @@ def _read_sddm_theme() -> dict[str, str]:
 
 def _copy_visual_tree(src: Path, dst: Path) -> bool:
     try:
-        if not src.exists() or path_is_sensitive(src):
+        if not src.exists() or src.is_symlink() or path_is_sensitive(src):
             return False
         if dst.exists():
             shutil.rmtree(dst) if dst.is_dir() else dst.unlink()
         if src.is_dir():
-            shutil.copytree(src, dst, symlinks=False)
-        elif src.is_file():
+            dst.mkdir(parents=True, exist_ok=True)
+            copied = False
+            for item in src.rglob("*"):
+                # Theme directories are system-visible input but still must not
+                # use a symlink to pull arbitrary files from elsewhere.
+                if item.is_symlink() or path_is_sensitive(item):
+                    continue
+                relative = item.relative_to(src)
+                target = dst / relative
+                if item.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                elif item.is_file():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(item, target)
+                    copied = True
+            return copied
+        if src.is_file():
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
-        else:
-            return False
-        return True
+            return True
+        return False
     except OSError:
         return False
 
@@ -281,12 +295,17 @@ def _copy_file(src: Path, dst: Path, home: Path, kind: str) -> CapturedFile:
     if should_treat_as_text and src.stat().st_size <= 8 * 1024 * 1024:
         try:
             text = src.read_text(encoding="utf-8", errors="strict")
-            if src.name in SHELL_FILES or src.suffix.lower() in SHELL_EXTENSIONS:
-                result = sanitize_shell_text(text)
-                text = result.text
-                sanitized = result.redacted_lines
+            # The assignment sanitizer is intentionally safe for generic
+            # text/INI files too. This prevents TOKEN=/PASSWORD=/API_KEY= style
+            # values from leaking through a non-shell config or .env file.
+            result = sanitize_shell_text(text)
+            text = result.text
+            sanitized = result.redacted_lines
             text, rewritten = _rewrite_home(text, home)
             if src.suffix.lower() == ".desktop":
+                desktop_result = sanitize_desktop_text(text)
+                text = desktop_result.text
+                sanitized += desktop_result.redacted_lines
                 text = _rewrite_desktop_exec_compat(text)
             dst.write_text(text, encoding="utf-8")
             shutil.copymode(src, dst)

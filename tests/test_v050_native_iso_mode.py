@@ -35,8 +35,9 @@ def test_v050_profile_app_plan_keeps_same_family_and_flatpak():
             {"name": "breeze", "provider": "apt", "installer_visible": True, "required_for_appearance": True},
         ]
     }
-    native, flatpaks = _profile_app_plan(manifest, "apt")
+    native, vendor, flatpaks = _profile_app_plan(manifest, "apt")
     assert native == ["git"]
+    assert vendor == []
     assert flatpaks == ["org.mozilla.firefox"]
 
 
@@ -51,8 +52,10 @@ def test_v050_cli_exposes_native_commands():
 
 
 def test_v050_release_version():
+    from linux_iso import __version__
+
     data = Path("pyproject.toml").read_text(encoding="utf-8")
-    assert 'version = "0.5.1"' in data
+    assert f'version = "{__version__}"' in data
 
 
 def test_v050_stage_native_generates_pardus_remaster_scripts(tmp_path: Path, monkeypatch):
@@ -179,7 +182,7 @@ def test_v050_native_stage_restores_distro_launcher_but_keeps_portable_fallback(
     assert "X-Suret-Original" not in code
 
 
-def test_v050_native_app_plan_resolves_vendor_apt_packages_to_flatpak():
+def test_v050_native_app_plan_resolves_vendor_apt_packages_to_vendor_repositories():
     manifest = {
         "packages": [
             {"name": "code", "provider": "apt", "installer_visible": True},
@@ -187,6 +190,7 @@ def test_v050_native_app_plan_resolves_vendor_apt_packages_to_flatpak():
             {"name": "git", "provider": "apt", "installer_visible": True},
         ]
     }
-    native, flatpaks = _profile_app_plan(manifest, "apt")
+    native, vendor, flatpaks = _profile_app_plan(manifest, "apt")
     assert native == ["git"]
-    assert flatpaks == ["com.visualstudio.code", "org.signal.Signal"]
+    assert vendor == ["microsoft-vscode", "signal-desktop"]
+    assert flatpaks == []
