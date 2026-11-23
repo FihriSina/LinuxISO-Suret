@@ -8,7 +8,7 @@ from linux_iso.builder import native
 
 
 def test_v053_version_bumped():
-    assert __version__ == "0.6.3"
+    assert __version__ == "0.6.4"
 
 
 def test_v053_iso_probe_uses_xorriso_find_echo_not_shell_print(monkeypatch, tmp_path: Path):

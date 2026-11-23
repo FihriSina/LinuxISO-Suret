@@ -57,11 +57,11 @@ def _probe() -> native.NativeIsoProbe:
 
 
 def test_v059_version_and_acceptance_banners_are_bumped():
-    assert __version__ == "0.6.3"
+    assert __version__ == "0.6.4"
     retry = Path("scripts/retry-native-acceptance.sh").read_text(encoding="utf-8")
     full = Path("scripts/native-acceptance.sh").read_text(encoding="utf-8")
-    assert "v0.6.3 Native retry" in retry
-    assert "v0.6.3 Native ISO acceptance" in full
+    assert "v0.6.4 Native retry" in retry
+    assert "v0.6.4 Native ISO acceptance" in full
     for text in (retry, full):
         assert 'phase "Native application plan"' in text
         assert '("Vendor APT", "vendor_apt_apps")' in text

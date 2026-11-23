@@ -2617,12 +2617,66 @@ if [[ -f "$ISO.sha256" ]]; then
 fi
 QEMU=$(command -v qemu-system-x86_64 || command -v qemu-kvm || true)
 [[ -n "$QEMU" ]] || { echo "qemu-system-x86_64 not found" >&2; exit 2; }
+QEMU_IMG=$(command -v qemu-img || true)
+[[ -n "$QEMU_IMG" ]] || { echo "qemu-img not found" >&2; exit 2; }
 DISK="$RESULT/linux-iso-native-test.qcow2"
-command -v qemu-img >/dev/null 2>&1 || { echo "qemu-img not found" >&2; exit 2; }
 rm -f "$DISK"
-qemu-img create -f qcow2 "$DISK" 40G
+"$QEMU_IMG" create -f qcow2 "$DISK" "${LINUX_ISO_QEMU_DISK_SIZE:-40G}"
+
+# Native images now carry a full Plasma desktop, captured appearance libraries,
+# vendor applications and first-login convergence jobs. The old fixed 2 vCPU /
+# 4 GiB / std-VGA test VM was too small and could make the live desktop look
+# frozen while the installer, PackageKit and filesystem copy were active.
+HOST_CPUS=$(nproc 2>/dev/null || echo 2)
+MEM_AVAILABLE_KB=$(awk '/^MemAvailable:/ {print $2; exit}' /proc/meminfo 2>/dev/null || echo 0)
+MEM_AVAILABLE_MIB=$((MEM_AVAILABLE_KB / 1024))
+if [[ -n "${LINUX_ISO_QEMU_MEMORY:-}" ]]; then
+  QEMU_MEMORY=$LINUX_ISO_QEMU_MEMORY
+elif (( MEM_AVAILABLE_MIB >= 16384 )); then
+  QEMU_MEMORY=8192
+elif (( MEM_AVAILABLE_MIB >= 10240 )); then
+  QEMU_MEMORY=6144
+elif (( MEM_AVAILABLE_MIB >= 6144 )); then
+  QEMU_MEMORY=4096
+else
+  QEMU_MEMORY=3072
+fi
+if [[ -n "${LINUX_ISO_QEMU_CPUS:-}" ]]; then
+  QEMU_CPUS=$LINUX_ISO_QEMU_CPUS
+elif (( HOST_CPUS >= 8 )); then
+  QEMU_CPUS=4
+elif (( HOST_CPUS >= 4 )); then
+  QEMU_CPUS=3
+else
+  QEMU_CPUS=2
+fi
+[[ "$QEMU_MEMORY" =~ ^[0-9]+$ ]] || { echo "LINUX_ISO_QEMU_MEMORY must be a MiB integer: $QEMU_MEMORY" >&2; exit 2; }
+[[ "$QEMU_CPUS" =~ ^[0-9]+$ ]] || { echo "LINUX_ISO_QEMU_CPUS must be an integer: $QEMU_CPUS" >&2; exit 2; }
+(( QEMU_MEMORY >= 2048 )) || { echo "QEMU memory below 2048 MiB is unsupported for this Plasma test VM" >&2; exit 2; }
+(( QEMU_CPUS >= 1 )) || { echo "QEMU CPU count must be at least 1" >&2; exit 2; }
+
 ACCEL=(-accel tcg,thread=multi -cpu max,la57=off)
-if [[ -r /dev/kvm && -w /dev/kvm ]]; then ACCEL=(-enable-kvm -cpu host); fi
+ACCEL_NAME="TCG software emulation"
+if [[ -r /dev/kvm && -w /dev/kvm ]]; then
+  ACCEL=(-accel kvm -cpu host)
+  ACCEL_NAME="KVM hardware acceleration"
+else
+  echo >&2
+  echo "WARNING: /dev/kvm is not usable by this user; QEMU is falling back to slow TCG software emulation." >&2
+  if [[ -e /dev/kvm ]]; then
+    echo "         KVM device exists but permissions deny access. Check: ls -l /dev/kvm ; id" >&2
+    echo "         On Debian/Pardus this is commonly fixed by adding the user to the kvm group, then logging out/in." >&2
+  else
+    echo "         /dev/kvm is missing. Check BIOS/UEFI virtualization and loaded KVM kernel modules." >&2
+  fi
+  echo >&2
+fi
+
+echo "QEMU acceleration: $ACCEL_NAME"
+echo "QEMU resources: ${QEMU_MEMORY} MiB RAM, ${QEMU_CPUS} vCPU (host: ${HOST_CPUS} CPU, ${MEM_AVAILABLE_MIB} MiB available)"
+echo "QEMU disk: virtio qcow2 with writeback/aio=threads"
+echo "QEMU display: virtio-vga (GTK, GL disabled by default for compatibility)"
+
 CODE=""; VARS=""
 for pair in \
   "/usr/share/OVMF/OVMF_CODE_4M.fd|/usr/share/OVMF/OVMF_VARS_4M.fd" \
@@ -2632,7 +2686,30 @@ do
   code=${pair%%|*}; vars=${pair#*|}
   if [[ -f "$code" && -f "$vars" ]]; then CODE="$code"; VARS="$vars"; break; fi
 done
-args=(-machine q35 "${ACCEL[@]}" -m 4096 -smp 2 -boot once=d,menu=on -drive "file=$DISK,format=qcow2,if=virtio" -cdrom "$ISO" -netdev user,id=net0 -device virtio-net-pci,netdev=net0 -display gtk,gl=off -name "Suret - NATIVE INSTALL / then INSTALLED SYSTEM")
+
+args=(-machine q35 "${ACCEL[@]}" -m "$QEMU_MEMORY" -smp "$QEMU_CPUS" -boot once=d,menu=on \
+  -drive "file=$DISK,format=qcow2,if=virtio,cache=writeback,aio=threads,discard=unmap" \
+  -cdrom "$ISO" -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
+  -device virtio-vga -device virtio-rng-pci -display gtk,gl=off \
+  -name "Suret - NATIVE INSTALL / then INSTALLED SYSTEM")
+
+DEVICE_HELP=$("$QEMU" -device help 2>/dev/null || true)
+if grep -q 'virtio-tablet-pci' <<<"$DEVICE_HELP"; then args+=( -device virtio-tablet-pci ); fi
+if grep -q 'virtio-keyboard-pci' <<<"$DEVICE_HELP"; then args+=( -device virtio-keyboard-pci ); fi
+
+# 3D/virgl is opt-in because host Mesa/NVIDIA/Wayland combinations vary widely.
+if [[ "${LINUX_ISO_QEMU_GL:-0}" == "1" ]]; then
+  if grep -q 'virtio-vga-gl' <<<"$DEVICE_HELP"; then
+    for ((i=0; i<${#args[@]}; i++)); do
+      [[ "${args[$i]}" == "virtio-vga" ]] && args[$i]="virtio-vga-gl"
+      [[ "${args[$i]}" == "gtk,gl=off" ]] && args[$i]="gtk,gl=on"
+    done
+    echo "QEMU 3D: virgl requested and enabled"
+  else
+    echo "warning: LINUX_ISO_QEMU_GL=1 requested but virtio-vga-gl is unavailable; using 2D virtio-vga" >&2
+  fi
+fi
+
 if [[ -n "$CODE" && -n "$VARS" ]]; then
   VARS_COPY="$RESULT/linux-iso-native-OVMF_VARS.fd"; cp "$VARS" "$VARS_COPY"
   args+=( -drive "if=pflash,format=raw,readonly=on,file=$CODE" -drive "if=pflash,format=raw,file=$VARS_COPY" )
@@ -2641,6 +2718,7 @@ else
 fi
 exec "$QEMU" "${args[@]}"
 '''
+
 
 
 def _shell_array(items: list[str]) -> str:

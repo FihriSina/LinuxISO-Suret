@@ -1,8 +1,18 @@
 # Current status
 
-**Current release: v0.6.3 - Complete KDE Appearance Convergence**
+**Current release: v0.6.4 - Native QEMU Performance Hardening**
 
-The Pardus Native path now preserves two visual states that previously diverged after a successful install: KDE Store SDDM login themes with user-selected external backgrounds, and Plasma slideshow desktops with their original collections/timing instead of a forced static first image.
+The Native image fidelity work from v0.6.3 is unchanged. v0.6.4 focuses on the acceptance VM itself so a slow QEMU fallback is not confused with a broken ISO.
+
+## v0.6.4 implemented
+
+- Native QEMU memory/CPU sizing adapts to host availability instead of staying fixed at 4096 MiB / 2 vCPU.
+- KVM use is printed explicitly; inaccessible or missing `/dev/kvm` emits a prominent TCG warning with host-side diagnostics.
+- Acceptance graphics use virtio-vga; disk/network/RNG and supported input devices are paravirtualized.
+- Disposable qcow2 test disk uses writeback cache and threaded AIO to reduce installer-copy stalls.
+- `LINUX_ISO_QEMU_MEMORY`, `LINUX_ISO_QEMU_CPUS`, `LINUX_ISO_QEMU_DISK_SIZE`, and optional `LINUX_ISO_QEMU_GL=1` provide explicit overrides.
+- Fidelity schema remains 12; a profile freshly captured by v0.6.3 can be reused.
+- 260 regression tests pass.
 
 ## v0.6.3 implemented
 

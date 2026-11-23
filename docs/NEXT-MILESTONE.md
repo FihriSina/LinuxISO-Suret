@@ -1,15 +1,15 @@
-# Next milestone - v0.6.3 Native Pardus full visual acceptance
+# Next milestone - v0.6.4 Native Pardus full visual + performance acceptance
 
 The next acceptance run validates the complete visual state now that the Native ISO boots, installs and reaches Plasma successfully.
 
-A **fresh capture is required once** because v0.6.3 uses fidelity schema 12. It adds safe theme symlink closure and per-desktop slideshow runtime metadata that older profiles do not contain.
+If you already made the required v0.6.3 schema-12 fresh capture, **do not capture again** for v0.6.4. This release changes only the generated QEMU acceptance VM and can reuse that verified profile.
 
-Run:
+Run a build retry with the verified schema-12 profile:
 
 ```bash
 cd ~/Kodlama/LinuxISO-Suret
 
-./scripts/native-acceptance.sh \
+./scripts/retry-native-acceptance.sh \
   "$HOME/İndirilenler/Pardus-25.2-XFCE-amd64.iso"
 ```
 
@@ -35,3 +35,6 @@ Acceptance criteria:
 8. No browser profile, cookies, passwords, tokens, credentials or unrelated personal documents are introduced.
 
 After this passes in both Live and installed-system QEMU boots, further work should move to optional XFCE removal and additional Native distro adapters rather than more first-boot appearance repair.
+
+
+Performance acceptance also requires the QEMU startup banner to report `KVM hardware acceleration` when the host supports KVM. If it reports `TCG software emulation`, fix `/dev/kvm` access before judging desktop responsiveness.
