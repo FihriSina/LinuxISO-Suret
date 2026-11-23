@@ -132,7 +132,7 @@ phase() {
 HERE=$(cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$HERE"
 
-echo "== Linux ISO - Suret v0.6.0 Native ISO acceptance =="
+echo "== Linux ISO - Suret v0.6.2 Native ISO acceptance =="
 echo "Base ISO: $BASE_ISO"
 echo "Profile:  $PROFILE"
 echo "Build:    $BUILD"
@@ -174,6 +174,17 @@ meta = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 for label, key in (("Distro packages", "native_apps"), ("Vendor APT", "vendor_apt_apps"), ("Vendor archive", "vendor_archive_apps"), ("Flatpak", "flatpaks")):
     values = meta.get(key) or []
     print(f"- {label}: {', '.join(values) if values else '(none)'}")
+web = meta.get("webapp_bindings") or {}
+if web.get("rewritten"):
+    browsers = web.get("browsers") or {}
+    detail = ", ".join(f"{name}={count}" for name, count in sorted(browsers.items()))
+    print(f"- Browser-bound web apps: {web.get('rewritten')} rewritten ({detail or 'browser affinity preserved'})")
+visual = meta.get("visual_fidelity") or {}
+sddm = visual.get("sddm") or {}
+if sddm.get("theme_captured"):
+    print(f"- SDDM theme: {sddm.get('source_theme') or 'captured'} ({len(sddm.get('external_assets') or [])} external asset(s))")
+slideshow = visual.get("slideshow") or {}
+print(f"- Plasma slideshow: {'active' if slideshow.get('active') else 'inactive'} ({len(slideshow.get('paths') or [])} collection path(s))")
 PYPLAN
 phase "Building Native ISO"
 "$BUILD/build-native.sh"

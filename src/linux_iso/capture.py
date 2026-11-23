@@ -9,7 +9,7 @@ import shutil
 import sqlite3
 import subprocess
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Iterable
 from urllib.parse import quote, unquote, urlparse
 
@@ -106,12 +106,21 @@ def _read_grub_defaults() -> dict[str, str]:
     return values
 
 
-def _read_sddm_theme() -> dict[str, str]:
+def _read_sddm_theme(
+    *,
+    vendor_confd: Path = Path("/usr/lib/sddm/sddm.conf.d"),
+    etc_confd: Path = Path("/etc/sddm.conf.d"),
+    main_config: Path = Path("/etc/sddm.conf"),
+) -> dict[str, str]:
     values: dict[str, str] = {}
-    files = [Path("/etc/sddm.conf")]
-    confd = Path("/etc/sddm.conf.d")
-    if confd.is_dir():
-        files.extend(sorted(confd.glob("*.conf")))
+    # SDDM precedence is vendor drop-ins -> /etc drop-ins -> /etc/sddm.conf.
+    # Reading these in the opposite order can capture a distro default instead
+    # of the login theme the user actually selected in System Settings.
+    files: list[Path] = []
+    for confd in (vendor_confd, etc_confd):
+        if confd.is_dir():
+            files.extend(sorted(path for path in confd.iterdir() if path.is_file()))
+    files.append(main_config)
     section = ""
     for path in files:
         if not path.is_file():
@@ -130,7 +139,7 @@ def _read_sddm_theme() -> dict[str, str]:
             if section != "theme" or "=" not in line:
                 continue
             key, value = line.split("=", 1)
-            if key.strip() in {"Current", "CursorTheme", "Font", "ThemeDir"}:
+            if key.strip() in {"Current", "CursorTheme", "CursorSize", "Font", "ThemeDir"}:
                 values[key.strip()] = value.strip()
     return values
 
@@ -142,21 +151,59 @@ def _copy_visual_tree(src: Path, dst: Path) -> bool:
         if dst.exists():
             shutil.rmtree(dst) if dst.is_dir() else dst.unlink()
         if src.is_dir():
+            root = src.resolve()
             dst.mkdir(parents=True, exist_ok=True)
             copied = False
-            for item in src.rglob("*"):
-                # Theme directories are system-visible input but still must not
-                # use a symlink to pull arbitrary files from elsewhere.
-                if item.is_symlink() or path_is_sensitive(item):
-                    continue
-                relative = item.relative_to(src)
-                target = dst / relative
-                if item.is_dir():
-                    target.mkdir(parents=True, exist_ok=True)
-                elif item.is_file():
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(item, target)
-                    copied = True
+            active_dirs: set[Path] = set()
+
+            def copy_dir(current: Path, target_root: Path) -> None:
+                nonlocal copied
+                try:
+                    resolved_current = current.resolve(strict=True)
+                except OSError:
+                    return
+                if resolved_current in active_dirs:
+                    return
+                try:
+                    resolved_current.relative_to(root)
+                except ValueError:
+                    return
+                active_dirs.add(resolved_current)
+                try:
+                    children = sorted(current.iterdir(), key=lambda item: item.name)
+                except OSError:
+                    active_dirs.discard(resolved_current)
+                    return
+                for item in children:
+                    if path_is_sensitive(item):
+                        continue
+                    target = target_root / item.name
+                    if item.is_symlink():
+                        try:
+                            resolved = item.resolve(strict=True)
+                            resolved.relative_to(root)
+                        except (OSError, ValueError):
+                            # Never allow a theme symlink to pull arbitrary data
+                            # from outside the captured theme tree.
+                            continue
+                        if resolved.is_dir():
+                            target.mkdir(parents=True, exist_ok=True)
+                            copy_dir(resolved, target)
+                        elif resolved.is_file():
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(resolved, target)
+                            copied = True
+                        continue
+                    if item.is_dir():
+                        target.mkdir(parents=True, exist_ok=True)
+                        copy_dir(item, target)
+                    elif item.is_file():
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(item, target)
+                        copied = True
+                active_dirs.discard(resolved_current)
+
+            copy_dir(src, dst)
             return copied
         if src.is_file():
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -167,14 +214,162 @@ def _copy_visual_tree(src: Path, dst: Path) -> bool:
         return False
 
 
-def _capture_system_visual_fidelity(output: Path) -> dict[str, object]:
+def _sddm_theme_candidates(settings: dict[str, str]) -> list[Path]:
+    current = settings.get("Current", "").strip()
+    if not current:
+        return []
+    roots: list[Path] = []
+    custom = settings.get("ThemeDir", "").strip()
+    if custom:
+        custom_path = Path(custom).expanduser()
+        if custom_path.is_absolute():
+            roots.append(custom_path)
+    roots.extend((Path("/usr/local/share/sddm/themes"), Path("/usr/share/sddm/themes")))
+    result: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        candidate = root / current
+        try:
+            key = candidate.resolve(strict=False)
+        except OSError:
+            key = candidate
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(candidate)
+    return result
+
+
+def _decode_sddm_asset_path(raw: str, *, theme_dir: Path, home: Path) -> Path | None:
+    value = raw.strip().strip('"').strip("'")
+    if not value or value.startswith(("qrc:", "data:", "http://", "https://")):
+        return None
+    if value.startswith("file://"):
+        parsed = urlparse(value)
+        if parsed.scheme != "file":
+            return None
+        value = unquote(parsed.path)
+    else:
+        value = unquote(value)
+    if value.startswith("$HOME/"):
+        candidate = home / value[len("$HOME/") :]
+    elif value.startswith("~/"):
+        candidate = home / value[2:]
+    elif value.startswith("/"):
+        candidate = Path(value)
+    else:
+        candidate = theme_dir / value
+    try:
+        return candidate.expanduser().resolve(strict=True)
+    except OSError:
+        return None
+
+
+def _bundle_sddm_external_assets(theme_dir: Path, captured_theme: Path, home: Path) -> list[str]:
+    """Make user-customized SDDM backgrounds self-contained.
+
+    KDE's SDDM KCM stores user overrides in ``theme.conf.user`` next to the
+    theme. The background value can be an absolute path into the user's
+    Pictures directory. Copying only the theme directory therefore leaves a
+    perfectly valid theme pointing at a file that is absent on the remastered
+    system, commonly producing a blank/white greeter. Only concrete image
+    references are promoted; browser state and unrelated home data remain out
+    of scope.
+    """
+    if not captured_theme.is_dir():
+        return []
+    try:
+        root = theme_dir.resolve(strict=True)
+    except OSError:
+        return []
+    copied: list[str] = []
+    config_names = {"theme.conf", "theme.conf.user"}
+    metadata = captured_theme / "metadata.desktop"
+    if metadata.is_file():
+        try:
+            section = ""
+            for raw in metadata.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = raw.strip()
+                if line.startswith("[") and line.endswith("]"):
+                    section = line[1:-1].strip().lower()
+                    continue
+                if section == "sddmgreetertheme" and "=" in line:
+                    key, value = line.split("=", 1)
+                    if key.strip() == "ConfigFile":
+                        rel = PurePosixPath(value.strip())
+                        if not rel.is_absolute() and ".." not in rel.parts and rel.parts:
+                            config_names.add(rel.as_posix())
+                            config_names.add(rel.as_posix() + ".user")
+        except OSError:
+            pass
+    config_files = sorted(
+        path
+        for path in captured_theme.rglob("*")
+        if path.is_file()
+        and (
+            path.relative_to(captured_theme).as_posix() in config_names
+            or path.name.endswith((".conf", ".conf.user", ".ini", ".ini.user"))
+        )
+    )
+    for captured_config in config_files:
+        try:
+            relative = captured_config.relative_to(captured_theme)
+            source_config = theme_dir / relative
+            lines = captured_config.read_text(encoding="utf-8", errors="replace").splitlines()
+        except (OSError, ValueError):
+            continue
+        rewritten: list[str] = []
+        changed = False
+        for line in lines:
+            stripped = line.strip()
+            if not stripped or stripped.startswith(("#", ";")) or "=" not in line:
+                rewritten.append(line)
+                continue
+            key, raw_value = line.split("=", 1)
+            candidate = _decode_sddm_asset_path(raw_value, theme_dir=theme_dir, home=home)
+            if candidate is None or not candidate.is_file() or path_is_sensitive(candidate):
+                rewritten.append(line)
+                continue
+            if candidate.suffix.lower() not in WALLPAPER_IMAGE_EXTENSIONS:
+                rewritten.append(line)
+                continue
+            try:
+                if candidate.stat().st_size > 64 * 1024 * 1024:
+                    rewritten.append(line)
+                    continue
+            except OSError:
+                rewritten.append(line)
+                continue
+
+            try:
+                inside_rel = candidate.relative_to(root)
+            except ValueError:
+                digest = sha256_file(candidate)[:12]
+                safe_name = candidate.name.replace("/", "_") or "background"
+                inside_rel = Path("suret-assets") / f"{digest}-{safe_name}"
+                target = captured_theme / inside_rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(candidate, target)
+                copied.append(inside_rel.as_posix())
+            # Absolute paths inside the original theme are also rewritten: the
+            # copied theme is renamed to ``suret-source`` on the target.
+            replacement = inside_rel.as_posix()
+            rewritten.append(f"{key}={replacement}")
+            if raw_value.strip().strip('"').strip("'") != replacement:
+                changed = True
+        if changed:
+            captured_config.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+    return sorted(set(copied))
+
+
+def _capture_system_visual_fidelity(output: Path, home: Path) -> dict[str, object]:
     """Capture non-personal, user-visible boot/login appearance.
 
     This intentionally excludes machine IDs, accounts and host-specific boot
     entries. Only theme assets and presentation-related settings are retained.
     """
     payload = output / "payload/system"
-    visual: dict[str, object] = {"schema": 1, "grub": {}, "sddm": {}}
+    visual: dict[str, object] = {"schema": 2, "grub": {}, "sddm": {}}
 
     grub = _read_grub_defaults()
     grub_meta: dict[str, object] = {"settings": grub}
@@ -197,11 +392,16 @@ def _capture_system_visual_fidelity(output: Path) -> dict[str, object]:
     sddm_meta: dict[str, object] = {"settings": sddm}
     current = sddm.get("Current", "")
     if current:
-        candidates = [Path("/usr/local/share/sddm/themes") / current, Path("/usr/share/sddm/themes") / current]
+        candidates = _sddm_theme_candidates(sddm)
         theme_dir = next((x for x in candidates if x.is_dir()), None)
-        if theme_dir and _copy_visual_tree(theme_dir, payload / "sddm/theme"):
+        captured_theme = payload / "sddm/theme"
+        if theme_dir and _copy_visual_tree(theme_dir, captured_theme):
             sddm_meta["theme_captured"] = True
             sddm_meta["source_theme"] = current
+            sddm_meta["source_theme_dir"] = str(theme_dir.parent)
+            bundled = _bundle_sddm_external_assets(theme_dir, captured_theme, home)
+            if bundled:
+                sddm_meta["external_assets"] = bundled
     visual["sddm"] = sddm_meta
 
     output.mkdir(parents=True, exist_ok=True)
@@ -589,11 +789,15 @@ def _runtime_wallpaper_files(home: Path, states: list[dict[str, object]]) -> lis
     result: list[Path] = []
     seen: set[Path] = set()
     for state in states:
-        raw = str(state.get("image") or "")
-        path = _normalize_local_config_path(raw, home)
-        if path is not None and path.is_file() and path not in seen:
-            seen.add(path)
-            result.append(path)
+        raw_values = [str(state.get("image") or "")]
+        raw_values.extend(
+            str(state.get("slidePaths") or "").replace(";", ",").split(",")
+        )
+        for raw in raw_values:
+            path = _normalize_local_config_path(raw, home)
+            if path is not None and path not in seen:
+                seen.add(path)
+                result.append(path)
     return result
 
 
@@ -653,19 +857,43 @@ def _apply_runtime_wallpaper_state(
     replacements: dict[str, str],
     captured_configs: list[CapturedFile],
 ) -> None:
-    """Pin copied Plasma containments to the wallpaper actually visible at scan time."""
-    usable: dict[int, str] = {}
+    """Apply live Plasma wallpaper state without changing the wallpaper plugin.
+
+    Older Suret releases forced slideshow containments to ``org.kde.image`` so
+    the first frame was deterministic. That preserved one picture but destroyed
+    the user's slideshow behavior. Runtime state is now used only to refresh
+    the active containment/plugin/path values while preserving slideshow mode,
+    interval/order settings and the complete captured collection.
+    """
+    usable: dict[int, dict[str, object]] = {}
     for state in states:
         try:
             containment_id = int(state.get("id"))
         except (TypeError, ValueError):
             continue
-        image = _normalize_local_config_path(str(state.get("image") or ""), home)
-        if image is None or not image.is_file():
+        plugin = str(state.get("plugin") or "").strip()
+        if not plugin:
             continue
-        target = _portable_wallpaper_target(image, home, replacements)
-        if target:
-            usable[containment_id] = "file://" + target
+        entry: dict[str, object] = {"plugin": plugin}
+        image = _normalize_local_config_path(str(state.get("image") or ""), home)
+        if image is not None and image.is_file():
+            target = _portable_wallpaper_target(image, home, replacements)
+            if target:
+                entry["Image"] = "file://" + target
+
+        slide_targets: list[str] = []
+        for raw in str(state.get("slidePaths") or "").replace(";", ",").split(","):
+            path = _normalize_local_config_path(raw, home)
+            if path is None:
+                continue
+            target = _portable_wallpaper_target(path, home, replacements)
+            if target:
+                slide_targets.append("file://" + target)
+        if slide_targets:
+            entry["SlidePaths"] = ",".join(dict.fromkeys(slide_targets))
+
+        if "Image" in entry or "SlidePaths" in entry or plugin != "org.kde.image":
+            usable[containment_id] = entry
     if not usable:
         return
 
@@ -681,13 +909,28 @@ def _apply_runtime_wallpaper_state(
     section = ""
     active_id: int | None = None
     wallpaper_section_for: int | None = None
-    section_had_image = False
+    section_keys: set[str] = set()
+    containment_had_plugin = False
     changed = False
 
     def finish_section() -> None:
         nonlocal changed
-        if wallpaper_section_for in usable and not section_had_image:
-            new_lines.append(f"Image={usable[wallpaper_section_for]}")
+        if wallpaper_section_for not in usable:
+            return
+        entry = usable[wallpaper_section_for]
+        for key in ("Image", "SlidePaths"):
+            value = entry.get(key)
+            if value and key not in section_keys:
+                new_lines.append(f"{key}={value}")
+                changed = True
+
+    def finish_containment() -> None:
+        nonlocal changed
+        if active_id not in usable or containment_had_plugin:
+            return
+        if section == f"[Containments][{active_id}]":
+            plugin = str(usable[active_id]["plugin"])
+            new_lines.append(f"wallpaperplugin={plugin}")
             changed = True
 
     containment_re = re.compile(r"^\[Containments\]\[(\d+)\](.*)$")
@@ -695,8 +938,10 @@ def _apply_runtime_wallpaper_state(
         stripped = line.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
             finish_section()
+            finish_containment()
             section = stripped
-            section_had_image = False
+            section_keys = set()
+            containment_had_plugin = False
             wallpaper_section_for = None
             active_id = None
             match = containment_re.match(section)
@@ -705,9 +950,10 @@ def _apply_runtime_wallpaper_state(
                 suffix = match.group(2)
                 if active_id in usable and "[Wallpaper]" in suffix and suffix.endswith("[General]"):
                     wallpaper_section_for = active_id
+                    plugin = str(usable[active_id]["plugin"])
                     replacement = re.sub(
                         r"\[Wallpaper\]\[[^\]]+\]\[General\]$",
-                        "[Wallpaper][org.kde.image][General]",
+                        f"[Wallpaper][{plugin}][General]",
                         section,
                     )
                     if replacement != section:
@@ -720,24 +966,27 @@ def _apply_runtime_wallpaper_state(
         if active_id in usable and section == f"[Containments][{active_id}]" and "=" in line:
             key, _value = line.split("=", 1)
             if key.strip().lower() == "wallpaperplugin":
-                replacement = "wallpaperplugin=org.kde.image"
+                replacement = f"wallpaperplugin={usable[active_id]['plugin']}"
                 new_lines.append(replacement)
+                containment_had_plugin = True
                 if line != replacement:
                     changed = True
                 continue
 
         if wallpaper_section_for in usable and "=" in line:
             key, _value = line.split("=", 1)
-            if key.strip() == "Image":
-                replacement = f"Image={usable[wallpaper_section_for]}"
+            key = key.strip()
+            if key in {"Image", "SlidePaths"} and usable[wallpaper_section_for].get(key):
+                replacement = f"{key}={usable[wallpaper_section_for][key]}"
                 new_lines.append(replacement)
-                section_had_image = True
+                section_keys.add(key)
                 if line != replacement:
                     changed = True
                 continue
         new_lines.append(line)
 
     finish_section()
+    finish_containment()
     if not changed:
         return
     config.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
@@ -829,13 +1078,11 @@ def _apply_slideshow_initial_overrides(
     overrides: dict[str, str],
     captured_configs: list[CapturedFile],
 ) -> None:
-    """Pin slideshow desktops to the source-visible image for deterministic first boot.
+    """Seed slideshow desktops with the source-visible image without disabling them.
 
-    Plasma's slideshow plugin can ignore a persisted ``Image=`` value when a
-    fresh target session starts and immediately choose a target-distro wallpaper.
-    For a reproducible visual snapshot, Suret converts the copied slideshow
-    containment to the static image plugin while retaining all captured slide
-    files in the profile. This changes only the restored copy, never the source.
+    The copied ``Image=`` value can point at a stale distro wallpaper even when
+    ``SlidePaths`` is correct. Set a captured slide as the initial image, but
+    keep ``org.kde.slideshow`` and all slideshow timing/order settings intact.
     """
     if not overrides:
         return
@@ -864,20 +1111,7 @@ def _apply_slideshow_initial_overrides(
             finish_section()
             section = stripped
             section_had_image = False
-            if section in overrides:
-                replacement = section.replace(
-                    "[Wallpaper][org.kde.slideshow][General]",
-                    "[Wallpaper][org.kde.image][General]",
-                )
-                if replacement != line:
-                    line = replacement
-                    changed = True
             new_lines.append(line)
-            continue
-
-        if line.strip().lower() == "wallpaperplugin=org.kde.slideshow":
-            new_lines.append("wallpaperplugin=org.kde.image")
-            changed = True
             continue
 
         if section in overrides and "=" in line:
@@ -933,6 +1167,45 @@ def _captured_visible_wallpaper(payload_home: Path) -> str | None:
         if candidate.is_file():
             return "{{HOME}}/" + relative
     return None
+
+
+def _captured_slideshow_state(payload_home: Path) -> dict[str, object]:
+    config = payload_home / ".config/plasma-org.kde.plasma.desktop-appletsrc"
+    result: dict[str, object] = {"active": False, "paths": [], "containments": 0}
+    if not config.is_file():
+        return result
+    try:
+        lines = config.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return result
+
+    section = ""
+    active_sections: set[str] = set()
+    paths: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped
+            if "[Wallpaper][org.kde.slideshow][General]" in section:
+                active_sections.add(section)
+            continue
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip().lower() == "wallpaperplugin" and value.strip() == "org.kde.slideshow":
+            result["active"] = True
+        if section in active_sections and key.strip() == "SlidePaths":
+            for raw in value.replace(";", ",").split(","):
+                token = unquote(raw.strip())
+                if token.startswith("file://"):
+                    token = token[7:]
+                if token and token not in paths:
+                    paths.append(token)
+    if active_sections:
+        result["active"] = True
+    result["paths"] = paths
+    result["containments"] = len(active_sections)
+    return result
 
 
 
@@ -1926,9 +2199,10 @@ def capture_profile(
         ],
     }
 
-    system_visual = _capture_system_visual_fidelity(output)
+    system_visual = _capture_system_visual_fidelity(output, home)
     source_info = _capture_source_branding(output, collect_system_info())
     visible_wallpaper = runtime_visible_wallpaper or _captured_visible_wallpaper(payload_home)
+    slideshow_state = _captured_slideshow_state(payload_home)
 
     manifest = Manifest(
         schema_version=1,
@@ -1943,8 +2217,9 @@ def capture_profile(
             "application_install_mode": "online-selective",
             "profile_version": __version__,
             "asset_mode": asset_mode,
-            "fidelity_schema": 10,
+            "fidelity_schema": 11,
             "visible_wallpaper": visible_wallpaper,
+            "slideshow": slideshow_state,
             "system_visual": system_visual,
             "desktop_surface": {
                 "directory": _portable_home_path(desktop_surface_dir, home),

@@ -1,44 +1,48 @@
-# Next milestone - v0.6.0 Native Pardus acceptance
+# Next milestone - v0.6.2 Native Pardus visual acceptance
 
-The next validation target is the first full Pardus 25.2 Native ISO remaster using the already captured and verified profile.
+The next validation target is a fresh Pardus 25.2 Native capture/build that proves the two newly fixed visual states on both Live and installed-system boots:
 
-Run only:
+- KDE Store SDDM login theme/background is visible instead of a white fallback.
+- Plasma desktop keeps the captured slideshow active and rotates through the captured image collection.
+
+Because v0.6.1 and older profiles intentionally flattened slideshow state and did not bundle external SDDM background files, v0.6.2 requires **one fresh source capture**. Do not use retry for the first v0.6.2 run.
+
+Run:
 
 ```bash
 cd ~/Kodlama/LinuxISO-Suret
 
-./scripts/retry-native-acceptance.sh \
+./scripts/native-acceptance.sh \
   "$HOME/İndirilenler/Pardus-25.2-XFCE-amd64.iso"
 ```
 
-The retry must reuse `~/linux-iso-profile`; it must not rescan the source desktop.
+Before the build starts, the application/visual plan should report the captured SDDM theme and slideshow state, for example:
+
+```text
+- SDDM theme: <theme-name> (1 external asset(s))
+- Plasma slideshow: active (1 collection path(s))
+```
 
 Expected Native chain:
 
-1. Host dependency bootstrap validates the complete generated-build toolset and a compatible OVMF CODE/VARS pair.
-2. The Pardus ISO is probed and source/base distro, architecture, and Pardus major-release compatibility are checked.
-3. The official Pardus live rootfs is extracted.
-4. Chroot package installation runs on a self bind-mounted root with isolated `/run`, masked host module state, service-start suppression, and build-only Flatpak/bubblewrap hardening.
-5. KDE Plasma + SDDM and all source appearance packages are required to install successfully. Captured APT Code/Signal resolve through vetted vendor APT repositories. Captured Flatpak Android Studio resolves through the vetted official Google Linux archive with SHA-256 + safe-extraction gates; only remaining true Flatpaks enter Flatpak/bubblewrap.
-6. Suret profile state is embedded and applied before SDDM to one primary target user; live target-user state remains under `/run`.
-7. `filesystem.packages`, `filesystem.size`, squashfs, and checksums are rebuilt; only changed live payload files are mapped back into the loaded base ISO so xorriso 1.5.6 does not replace legacy boot-image files before boot replay.
-8. The remastered ISO is structurally/boot verified, SHA-256 checksummed, and the exact verified output is then opened in QEMU.
+1. Fresh schema-v11 profile capture and verification.
+2. Pardus ISO probe and Native staging.
+3. KDE/SDDM, appearance dependencies and captured applications install inside the Pardus rootfs.
+4. Captured SDDM theme is installed as `/usr/share/sddm/themes/suret-source`; competing base `[Theme]` keys are neutralized without touching unrelated SDDM settings.
+5. User profile is applied pre-login with the slideshow plugin and complete slide collection intact.
+6. Live metadata, squashfs and ISO checksums are rebuilt.
+7. Boot metadata is preserved and verified.
+8. QEMU validates Live boot, Pardus installer and installed-system boot.
 
-QEMU acceptance criteria:
+Acceptance criteria:
 
-- System identity remains Pardus.
-- Pardus installer remains available.
-- Plasma is the active desktop while XFCE remains installed by default.
-- Source wallpaper, panel/Kickoff state, avatar, icons, cursor, fonts, themes, and visible desktop launchers converge without a post-login visual jump.
-- Pardus-native launchers use their original commands.
-- Portable/vendor applications have a real installed runtime; no dead launcher is accepted.
-- Installed-system boot preserves the same profile and does not leak personal/credential data.
+- SDDM does not fall back to a white/default background.
+- The selected KDE Store login theme renders with its captured custom background.
+- Plasma `wallpaperplugin` remains `org.kde.slideshow` when that is the source state.
+- `SlidePaths` resolves only to payload-backed portable paths.
+- Multiple slideshow images are present on the target and change according to the captured slideshow settings.
+- Existing panel/Kickoff/avatar/theme/application fidelity remains unchanged.
+- ChatGPT/other Brave-bound web apps still open in Brave app-window mode rather than the default browser.
+- No browser profile, cookies, passwords, tokens or other credential data is introduced.
 
-If the command fails, preserve the complete terminal output. Debug the surrounding Native build stage in one batch rather than patching only the final error line.
-
-## Later scope
-
-- Optional `--replace-base-desktop` acceptance after the default KDE+XFCE path is stable.
-- Debian/Ubuntu-family Native adapter generalization.
-- Fedora/Anaconda Native adapter.
-- GUI workflow for ISO selection, scan, build, and validation.
+After this visual acceptance passes, later work can focus on optional XFCE removal and broader Native distro adapters rather than further first-boot fidelity repair.

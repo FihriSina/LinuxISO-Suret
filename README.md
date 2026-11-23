@@ -6,7 +6,7 @@
 
 ## Native ISO Mode (recommended)
 
-Suret v0.6.0 can remaster a user-supplied distro ISO instead of rebuilding the desktop on an Ubuntu/Kubuntu base. Pardus 25 live ISOs are the first build-capable adapter.
+Suret v0.6.2 can remaster a user-supplied distro ISO instead of rebuilding the desktop on an Ubuntu/Kubuntu base. Pardus 25 live ISOs are the first build-capable adapter.
 
 ```bash
 uv run linux-iso probe-iso ~/Downloads/Pardus-25.2-XFCE-amd64.iso
@@ -24,7 +24,27 @@ This preserves the existing verified profile and rebuilds only the native ISO pa
 A KDE profile on a Pardus XFCE ISO installs KDE inside Pardus, embeds the captured profile, installs source applications when resolvable, preserves the Pardus bootloader/installer/repositories, and repacks the ISO. Generic KIWI mode remains available through `stage-iso` / `build-iso`.
 
 
-## Current milestone: v0.6.0
+## Current milestone: v0.6.2
+
+### v0.6.2: SDDM + Plasma slideshow fidelity
+
+- Preserves the source Plasma wallpaper plugin instead of converting `org.kde.slideshow` to a static image. `SlidePaths`, timing/order settings and the complete captured image collection remain active on the target.
+- Uses the currently visible/captured slide only as the initial `Image=` seed; slideshow behavior continues after login.
+- Captures SDDM configuration in SDDM's real precedence order, including `/etc/sddm.conf` as the final override.
+- Honors a custom SDDM `ThemeDir` and makes KDE Store login themes self-contained by bundling user-selected external background images referenced by `theme.conf.user`.
+- Safely dereferences only theme-internal symlinks; external symlinks cannot pull arbitrary files into the profile.
+- Native restore removes only conflicting SDDM `[Theme]` keys from the base ISO, installs the captured theme as `suret-source`, and fails the build if the captured theme cannot be restored or lacks `Main.qml`.
+- Fidelity schema is now v11. Profiles captured by older Suret releases must be captured once again; retry mode refuses to guess whether a legacy static wallpaper was originally a slideshow.
+- Current regression suite: 243 tests.
+
+### v0.6.1: Brave-bound PWA/web-app fidelity
+
+Native staging now preserves the browser binding of captured Brave web apps.
+Older ChatGPT/WhatsApp launchers that were normalized to `xdg-open` are recovered
+from Suret's reversible metadata and rendered as Brave `--app=URL` launchers.
+Brave is installed from its official Debian repository when needed, while browser
+profiles, cookies, history and authentication state remain excluded. Existing
+profiles can be reused without another capture.
 
 ### v0.6.0: Android Studio vendor-archive resolver + extra-data escape hatch
 

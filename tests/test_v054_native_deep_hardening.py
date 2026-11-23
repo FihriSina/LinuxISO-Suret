@@ -65,9 +65,9 @@ def _probe() -> native.NativeIsoProbe:
 
 
 def test_v054_version_and_native_scripts_are_bumped():
-    assert __version__ == "0.6.0"
-    assert "v0.6.0 Native ISO acceptance" in Path("scripts/native-acceptance.sh").read_text(encoding="utf-8")
-    assert "v0.6.0 Native retry" in Path("scripts/retry-native-acceptance.sh").read_text(encoding="utf-8")
+    assert __version__ == "0.6.2"
+    assert "v0.6.2 Native ISO acceptance" in Path("scripts/native-acceptance.sh").read_text(encoding="utf-8")
+    assert "v0.6.2 Native retry" in Path("scripts/retry-native-acceptance.sh").read_text(encoding="utf-8")
 
 
 def test_v054_required_appearance_packages_have_a_separate_mandatory_plan():

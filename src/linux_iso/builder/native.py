@@ -4,12 +4,14 @@ import base64
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
+from urllib.parse import urlparse
 
 import yaml
 
@@ -83,6 +85,16 @@ PARDUS_XFCE_REMOVE_PACKAGES = [
 # installs inside the remaster chroot.  The resolver IDs below are a strict
 # allow-list; profile data can never inject an arbitrary repository.
 VENDOR_APT_RESOLVERS: dict[str, dict[str, str]] = {
+    "brave-browser": {
+        "id": "brave-browser",
+        "package": "brave-browser",
+        "key_url": "https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg",
+        "keyring": "/usr/share/keyrings/brave-browser-archive-keyring.gpg",
+        "source_file": "/etc/apt/sources.list.d/brave-browser-release.sources",
+        "source_url": "https://brave-browser-apt-release.s3.brave.com/brave-browser.sources",
+        "source_line": "deb [arch=amd64 signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com stable main",
+        "portable_exec": "",
+    },
     "code": {
         "id": "microsoft-vscode",
         "package": "code",
@@ -156,8 +168,6 @@ PORTABLE_FLATPAK_FALLBACKS = {
     "spotify-client": "com.spotify.Client",
     "spotify": "com.spotify.Client",
     "obs-studio": "com.obsproject.Studio",
-    "brave-browser": "com.brave.Browser",
-    "brave": "com.brave.Browser",
     "google-chrome-stable": "com.google.Chrome",
 }
 
@@ -420,6 +430,166 @@ def _profile_app_plan(manifest: dict, package_family: str) -> tuple[list[str], l
                     "Refusing to keep a launcher for an application that will not be installed."
                 )
     return native, vendor_apt, flatpaks
+
+
+BRAVE_NATIVE_EXECUTABLES = {"brave-browser", "brave-browser-stable", "brave"}
+
+
+def _safe_webapp_url_from_portable_exec(command: str) -> str | None:
+    """Return the URL from a capture-time xdg-open web-app fallback.
+
+    Desktop Exec lines are not shell commands, but shlex is still useful for the
+    constrained two-token form emitted by Suret. Refuse controls, whitespace in
+    the URL, credentials, and non-HTTP(S) schemes before rendering the URL back
+    into a launcher.
+    """
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        return None
+    if len(tokens) != 2 or Path(tokens[0]).name != "xdg-open":
+        return None
+    url = tokens[1]
+    if any(ord(ch) < 32 or ch.isspace() for ch in url):
+        return None
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        return None
+    if parsed.username is not None or parsed.password is not None:
+        return None
+    if any(ch in url for ch in {'"', "\\"}):
+        return None
+    return url
+
+
+def _browser_binding_from_original_exec(command: str) -> tuple[str, str | None, str | None] | None:
+    """Classify the source browser contract without preserving browser profile data.
+
+    Returns ``(target_exec_prefix, vendor_apt_resolver, flatpak_app_id)``. Only
+    code-owned browser identities are accepted; arbitrary commands from profile
+    data are never re-emitted.
+    """
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+    executable = Path(tokens[0]).name
+    if executable in BRAVE_NATIVE_EXECUTABLES:
+        return ("/usr/bin/brave-browser", "brave-browser", None)
+    if executable == "flatpak" and "com.brave.Browser" in tokens:
+        return ("flatpak run com.brave.Browser", None, "com.brave.Browser")
+    return None
+
+
+def _desktop_exec_url(url: str) -> str:
+    # In the Desktop Entry Exec grammar '%' introduces a field code. Doubling
+    # it preserves literal percent escapes such as %20 in URLs.
+    return url.replace("%", "%%")
+
+
+def _rewrite_native_webapp_launchers(profile_copy: Path) -> dict[str, object]:
+    """Preserve browser affinity for captured web apps without copying profiles.
+
+    Older Suret profiles deliberately normalized ChatGPT/WhatsApp PWA launchers
+    to ``xdg-open URL`` and stored the original browser command in a reversible
+    marker. Native Mode can use that marker to recover *which browser* owned the
+    web app while discarding profile-directory/app-id state (which depends on
+    sensitive browser profile storage that Suret must never copy). The target
+    launcher uses Chromium/Brave's profile-independent ``--app=URL`` mode.
+    """
+    result: dict[str, object] = {
+        "rewritten": 0,
+        "vendor_apt_apps": [],
+        "flatpaks": [],
+        "browsers": {},
+    }
+    payload = profile_copy / "payload"
+    if not payload.is_dir():
+        return result
+
+    vendor_apt: set[str] = set()
+    flatpaks: set[str] = set()
+    browsers: dict[str, int] = {}
+    rewritten = 0
+
+    for path in payload.rglob("*.desktop"):
+        try:
+            raw = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        lines = raw.splitlines(keepends=True)
+        out: list[str] = []
+        i = 0
+        changed = False
+        path_binding: tuple[str, str | None, str | None] | None = None
+        while i < len(lines):
+            line = lines[i]
+            stripped = line.rstrip("\r\n")
+            if stripped.startswith("Exec=") and i + 1 < len(lines):
+                marker = lines[i + 1].rstrip("\r\n")
+                prefix = "X-Suret-Original-Exec-B64="
+                if marker.startswith(prefix):
+                    current = stripped.split("=", 1)[1].strip()
+                    url = _safe_webapp_url_from_portable_exec(current)
+                    encoded = marker[len(prefix):].strip()
+                    try:
+                        original = base64.urlsafe_b64decode(encoded.encode("ascii")).decode("utf-8")
+                    except (ValueError, UnicodeDecodeError):
+                        original = ""
+                    binding = _browser_binding_from_original_exec(original) if url else None
+                    if binding is not None and url is not None:
+                        target_prefix, vendor_id, flatpak_id = binding
+                        newline = line[len(stripped):]
+                        out.append(f"Exec={target_prefix} --app={_desktop_exec_url(url)}{newline}")
+                        i += 2  # Drop the Suret-only reversible marker.
+                        rewritten += 1
+                        changed = True
+                        path_binding = binding
+                        if vendor_id:
+                            vendor_apt.add(vendor_id)
+                            browsers["brave-native"] = browsers.get("brave-native", 0) + 1
+                        if flatpak_id:
+                            flatpaks.add(flatpak_id)
+                            browsers["brave-flatpak"] = browsers.get("brave-flatpak", 0) + 1
+                        continue
+            out.append(line)
+            i += 1
+
+        if changed and path_binding is not None:
+            _target_prefix, vendor_id, flatpak_id = path_binding
+            final: list[str] = []
+            saw_tryexec = False
+            for line in out:
+                stripped = line.rstrip("\r\n")
+                newline = line[len(stripped):]
+                if stripped.startswith("TryExec="):
+                    saw_tryexec = True
+                    if vendor_id == "brave-browser":
+                        final.append(f"TryExec=/usr/bin/brave-browser{newline}")
+                    elif flatpak_id == "com.brave.Browser":
+                        final.append(f"TryExec=flatpak{newline}")
+                    else:
+                        final.append(line)
+                    continue
+                # The source app-id belongs to a browser profile registry that is
+                # intentionally not copied. Keeping crx_<app-id> would mislead
+                # Plasma's task matching after switching to --app=URL.
+                if stripped.startswith("StartupWMClass=crx_"):
+                    continue
+                final.append(line)
+            if not saw_tryexec:
+                insertion = 1 if final and final[0].startswith("[Desktop Entry]") else 0
+                tryexec = "/usr/bin/brave-browser" if vendor_id == "brave-browser" else "flatpak"
+                final.insert(insertion, f"TryExec={tryexec}\n")
+            path.write_text("".join(final), encoding="utf-8")
+
+    result["rewritten"] = rewritten
+    result["vendor_apt_apps"] = sorted(vendor_apt)
+    result["flatpaks"] = sorted(flatpaks)
+    result["browsers"] = browsers
+    return result
 
 
 def _restore_native_launcher_execs(profile_copy: Path, *, restore_portable_execs: set[str] | None = None) -> int:
@@ -957,6 +1127,42 @@ def copy_tree(src: Path, dst: Path) -> bool:
     return True
 
 
+def strip_ini_keys(path: Path, section_name: str, keys: set[str]) -> None:
+    if not path.is_file():
+        return
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return
+    section = ""
+    kept: list[str] = []
+    changed = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped[1:-1].strip().lower()
+            kept.append(line)
+            continue
+        if section == section_name.lower() and "=" in line and not stripped.startswith(("#", ";")):
+            key = line.split("=", 1)[0].strip()
+            if key in keys:
+                changed = True
+                continue
+        kept.append(line)
+    if changed:
+        path.write_text("\n".join(kept) + "\n", encoding="utf-8")
+
+
+def neutralize_sddm_theme_overrides() -> None:
+    keys = {"Current", "CursorTheme", "CursorSize", "Font", "ThemeDir"}
+    confd = Path("/etc/sddm.conf.d")
+    if confd.is_dir():
+        for path in sorted(confd.iterdir()):
+            if path.is_file() and path.name != "10-suret-source-theme.conf":
+                strip_ini_keys(path, "Theme", keys)
+    strip_ini_keys(Path("/etc/sddm.conf"), "Theme", keys)
+
+
 def main() -> int:
     if not META.is_file():
         return 0
@@ -1018,15 +1224,32 @@ def main() -> int:
             pass
 
     sddm_lines = ["[Theme]"]
-    if sddm.get("theme_captured") and copy_tree(PAYLOAD / "sddm/theme", Path("/usr/share/sddm/themes/suret-source")):
+    if sddm.get("theme_captured"):
+        theme_dst = Path("/usr/share/sddm/themes/suret-source")
+        if not copy_tree(PAYLOAD / "sddm/theme", theme_dst):
+            print("Suret: captured SDDM theme could not be restored", flush=True)
+            return 20
+        if not (theme_dst / "Main.qml").is_file():
+            print("Suret: restored SDDM theme is missing Main.qml", flush=True)
+            return 21
+        sddm_lines.append("ThemeDir=/usr/share/sddm/themes")
         sddm_lines.append("Current=suret-source")
     font = clean_ini_value(sddm_settings.get("Font"))
     if cursor:
         sddm_lines.append(f"CursorTheme={cursor}")
+    cursor_size = clean_ini_value(sddm_settings.get("CursorSize"))
+    if cursor_size and cursor_size.isdigit():
+        sddm_lines.append(f"CursorSize={cursor_size}")
     if font:
         sddm_lines.append(f"Font={font}")
     if len(sddm_lines) > 1:
-        cfg = Path("/etc/sddm.conf.d/80-suret-source-theme.conf")
+        # Base ISO config can otherwise override the restored theme after this
+        # script writes a drop-in. Remove only competing [Theme] keys, leaving
+        # autologin/session/other SDDM settings untouched. The low-numbered
+        # Suret file gives the restored first-boot state while allowing a later
+        # kde_settings.conf written by System Settings to override it normally.
+        neutralize_sddm_theme_overrides()
+        cfg = Path("/etc/sddm.conf.d/10-suret-source-theme.conf")
         cfg.parent.mkdir(parents=True, exist_ok=True)
         cfg.write_text("\n".join(sddm_lines) + "\n", encoding="utf-8")
     return 0
@@ -1421,7 +1644,8 @@ done
 
 # Apply system-visible fonts/cursor/SDDM state after KDE/SDDM packages exist.
 if ! sudo chroot "$ROOTFS" /usr/lib/linux-iso/native-system-visual.py; then
-  echo "warning: system visual convergence reported an error; continuing for diagnostics" >&2
+  echo "Native system visual convergence failed; refusing to ship a visually divergent ISO." >&2
+  exit 35
 fi
 
 cleanup_chroot
@@ -1758,7 +1982,19 @@ if command -v apt-get >/dev/null 2>&1; then
     chmod 0700 "$GNUPGHOME"
 
     for vendor in "${vendor_apt_apps[@]}"; do
+      key_format="dearmor"
+      source_url=""
       case "$vendor" in
+        brave-browser)
+          vendor_name="Brave Browser"
+          vendor_pkg="brave-browser"
+          key_url="https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg"
+          keyring="/usr/share/keyrings/brave-browser-archive-keyring.gpg"
+          source_file="/etc/apt/sources.list.d/brave-browser-release.sources"
+          source_url="https://brave-browser-apt-release.s3.brave.com/brave-browser.sources"
+          source_line="deb [arch=amd64 signed-by=/usr/share/keyrings/brave-browser-archive-keyring.gpg] https://brave-browser-apt-release.s3.brave.com stable main"
+          key_format="raw"
+          ;;
         microsoft-vscode)
           vendor_name="Visual Studio Code"
           vendor_pkg="code"
@@ -1782,19 +2018,38 @@ if command -v apt-get >/dev/null 2>&1; then
       esac
 
       log "Adding official vendor repository for $vendor_name"
-      key_tmp="$APT_RUNTIME_ROOT/vendor-${vendor}.asc"
+      key_tmp="$APT_RUNTIME_ROOT/vendor-${vendor}.key"
       mkdir -p "$(dirname "$keyring")" "$(dirname "$source_file")"
       if ! curl --fail --silent --show-error --location --retry 3 --connect-timeout 20 --max-time 120 "$key_url" -o "$key_tmp"; then
         log "ERROR: could not download signing key for $vendor_name"
         exit 41
       fi
-      if ! gpg --batch --yes --dearmor --output "$keyring" "$key_tmp"; then
-        log "ERROR: could not prepare signing key for $vendor_name"
-        exit 42
+      if [[ "$key_format" == "raw" ]]; then
+        if ! gpg --batch --show-keys "$key_tmp" >/dev/null 2>&1; then
+          log "ERROR: downloaded vendor signing key is not a valid OpenPGP key for $vendor_name"
+          exit 42
+        fi
+        install -m 0644 "$key_tmp" "$keyring"
+      else
+        if ! gpg --batch --yes --dearmor --output "$keyring" "$key_tmp"; then
+          log "ERROR: could not prepare signing key for $vendor_name"
+          exit 42
+        fi
+        chmod 0644 "$keyring"
       fi
-      chmod 0644 "$keyring"
-      printf '%s\n' "$source_line" > "$source_file"
-      chmod 0644 "$source_file"
+      if [[ -n "$source_url" ]]; then
+        if ! curl --fail --silent --show-error --location --retry 3 --connect-timeout 20 --max-time 120 "$source_url" -o "$source_file"; then
+          log "ERROR: could not download official APT source descriptor for $vendor_name"
+          exit 41
+        fi
+        chmod 0644 "$source_file"
+      else
+        printf '%s\n' "$source_line" > "$source_file"
+        chmod 0644 "$source_file"
+      fi
+      # Native builds use an isolated source list, so mirror the vetted source
+      # as a one-line entry there while preserving the vendor's official .sources
+      # descriptor in the installed image for normal future updates.
       if ! grep -Fqx -- "$source_line" "$APT_BUILD_SOURCES"; then
         printf '%s\n' "$source_line" >> "$APT_BUILD_SOURCES"
       fi
@@ -1805,6 +2060,7 @@ if command -v apt-get >/dev/null 2>&1; then
 
     for vendor in "${vendor_apt_apps[@]}"; do
       case "$vendor" in
+        brave-browser) vendor_name="Brave Browser"; vendor_pkg="brave-browser" ;;
         microsoft-vscode) vendor_name="Visual Studio Code"; vendor_pkg="code" ;;
         signal-desktop) vendor_name="Signal Desktop"; vendor_pkg="signal-desktop" ;;
         *) log "ERROR: unknown vendor APT resolver during install: $vendor"; exit 40 ;;
@@ -2151,6 +2407,18 @@ def stage_native_project(
         )
 
     manifest = _load_manifest(profile)
+    restore_meta = manifest.get("restore") or {}
+    profile_version = str(restore_meta.get("profile_version") or "").strip()
+    try:
+        fidelity_schema = int(restore_meta.get("fidelity_schema") or 0)
+    except (TypeError, ValueError):
+        fidelity_schema = 0
+    if profile_version and fidelity_schema < 11:
+        raise NativeIsoError(
+            "This profile predates Suret's SDDM/slideshow fidelity schema. "
+            "Run scripts/native-acceptance.sh once to recapture the source profile; "
+            "retry mode intentionally refuses to guess whether a legacy static wallpaper was originally a slideshow."
+        )
     profile_fingerprint = sha256_file(profile / "manifest.yaml")
     source = manifest.get("source", {})
     source_id = str(source.get("distro_id") or "").lower()
@@ -2183,11 +2451,6 @@ def stage_native_project(
     appearance_packages = _profile_appearance_plan(manifest, probe.package_family)
     native_apps, vendor_apt_apps, flatpaks = _profile_app_plan(manifest, probe.package_family)
     vendor_archive_apps, flatpaks = _split_vendor_archive_flatpaks(flatpaks)
-    vendor_restore_execs = {
-        spec["portable_exec"]
-        for spec in VENDOR_APT_RESOLVERS.values()
-        if spec["id"] in vendor_apt_apps
-    }
     output_name = f"suret-{probe.distro_id}-{probe.distro_version or 'native'}-kde-amd64.iso"
     output.mkdir(parents=True, exist_ok=True)
     # Marker used by acceptance cleanup to distinguish an intentionally staged
@@ -2206,6 +2469,23 @@ def stage_native_project(
         else:
             shutil.rmtree(staged_profile)
     shutil.copytree(profile, staged_profile, symlinks=True)
+
+    # Recover browser affinity for web apps that older profiles normalized to
+    # xdg-open. This happens before generic launcher restoration so the original
+    # Brave app-id/profile command can be consumed without copying browser state.
+    webapp_bindings = _rewrite_native_webapp_launchers(staged_profile)
+    for resolver_id in webapp_bindings.get("vendor_apt_apps", []):
+        if resolver_id not in vendor_apt_apps:
+            vendor_apt_apps.append(str(resolver_id))
+    for app_id in webapp_bindings.get("flatpaks", []):
+        if app_id not in flatpaks:
+            flatpaks.append(str(app_id))
+
+    vendor_restore_execs = {
+        spec["portable_exec"]
+        for spec in VENDOR_APT_RESOLVERS.values()
+        if spec["id"] in vendor_apt_apps and spec.get("portable_exec")
+    }
     restored_native_launchers = _restore_native_launcher_execs(
         staged_profile, restore_portable_execs=vendor_restore_execs
     )
@@ -2229,8 +2509,13 @@ def stage_native_project(
         "vendor_apt_apps": vendor_apt_apps,
         "vendor_archive_apps": vendor_archive_apps,
         "flatpaks": flatpaks,
+        "webapp_bindings": webapp_bindings,
         "restored_native_launchers": restored_native_launchers,
         "rewritten_vendor_archive_launchers": rewritten_vendor_archive_launchers,
+        "visual_fidelity": {
+            "slideshow": restore_meta.get("slideshow") or {},
+            "sddm": ((restore_meta.get("system_visual") or {}).get("sddm") or {}),
+        },
     }
     (output / "native.json").write_text(_safe_json(state), encoding="utf-8")
     (output / "profile/native-restore.json").write_text(

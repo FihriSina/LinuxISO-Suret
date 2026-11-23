@@ -16,9 +16,9 @@ def _extract_function(script: str, name: str) -> str:
 
 
 def test_v056_version_and_acceptance_banners_are_bumped():
-    assert __version__ == "0.6.0"
-    assert "v0.6.0 Native ISO acceptance" in Path("scripts/native-acceptance.sh").read_text(encoding="utf-8")
-    assert "v0.6.0 Native retry" in Path("scripts/retry-native-acceptance.sh").read_text(encoding="utf-8")
+    assert __version__ == "0.6.2"
+    assert "v0.6.2 Native ISO acceptance" in Path("scripts/native-acceptance.sh").read_text(encoding="utf-8")
+    assert "v0.6.2 Native retry" in Path("scripts/retry-native-acceptance.sh").read_text(encoding="utf-8")
 
 
 def test_v056_native_apt_uses_isolated_build_sources_not_live_media():

@@ -74,7 +74,7 @@ def test_v0327_captures_kickoff_favorites_order_membership_and_avatar(tmp_path: 
     profile = tmp_path / "profile"
     manifest = capture_profile(profile, home)
 
-    assert manifest.restore["fidelity_schema"] == 10
+    assert manifest.restore["fidelity_schema"] == 11
     assert (profile / "payload/home/.face").read_bytes() == b"avatar-bytes"
     assert (profile / "payload/home/.local/share/applications/alpha.desktop").is_file()
     assert (profile / "payload/home/.local/share/applications/beta.desktop").is_file()
@@ -126,14 +126,17 @@ def test_v0327_slideshow_uses_most_recent_source_slide_as_initial_image(tmp_path
     )
 
     profile = tmp_path / "profile"
-    capture_profile(profile, home)
+    manifest = capture_profile(profile, home)
     restored = (
         profile / "payload/home/.config/plasma-org.kde.plasma.desktop-appletsrc"
     ).read_text(encoding="utf-8")
 
     assert "Image=file://{{HOME}}/Resimler/ArkaPlanlar/dreamlike-whale.jpg" in restored
-    assert "[Wallpaper][org.kde.image][General]" in restored
-    assert "[Wallpaper][org.kde.slideshow][General]" not in restored
+    assert "[Wallpaper][org.kde.slideshow][General]" in restored
+    assert "SlidePaths=file://{{HOME}}/Resimler/ArkaPlanlar" in restored
+    assert "[Wallpaper][org.kde.image][General]" not in restored
+    assert manifest.restore["slideshow"]["active"] is True
+    assert manifest.restore["slideshow"]["paths"] == ["{{HOME}}/Resimler/ArkaPlanlar"]
     assert (profile / "payload/home/Resimler/ArkaPlanlar/dreamlike-whale.jpg").is_file()
     assert verify_profile(profile).ok
 

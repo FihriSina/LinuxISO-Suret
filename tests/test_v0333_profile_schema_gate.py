@@ -41,30 +41,30 @@ def _run(tmp_path: Path, schema: str | None) -> subprocess.CompletedProcess[str]
     )
 
 
-def test_v042_safe_build_accepts_current_schema_10(tmp_path: Path):
-    result = _run(tmp_path, "10")
-    assert result.returncode == 0, result.stderr
-    assert (tmp_path / "build/build-was-called").exists()
-
-
-def test_v040_safe_build_accepts_future_schema(tmp_path: Path):
+def test_v062_safe_build_accepts_current_schema_11(tmp_path: Path):
     result = _run(tmp_path, "11")
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "build/build-was-called").exists()
 
 
+def test_v040_safe_build_accepts_future_schema(tmp_path: Path):
+    result = _run(tmp_path, "12")
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "build/build-was-called").exists()
 
-def test_v042_safe_build_rejects_schema_9(tmp_path: Path):
-    result = _run(tmp_path, "9")
+
+
+def test_v062_safe_build_rejects_schema_10(tmp_path: Path):
+    result = _run(tmp_path, "10")
     assert result.returncode == 6
-    assert "first-login convergence fidelity capture v10" in result.stderr
-    assert "Detected fidelity_schema: 9" in result.stderr
+    assert "SDDM/slideshow fidelity capture v11" in result.stderr
+    assert "Detected fidelity_schema: 10" in result.stderr
     assert not (tmp_path / "build/build-was-called").exists()
 
 def test_v0333_safe_build_rejects_schema_7(tmp_path: Path):
     result = _run(tmp_path, "7")
     assert result.returncode == 6
-    assert "first-login convergence fidelity capture v10" in result.stderr
+    assert "SDDM/slideshow fidelity capture v11" in result.stderr
     assert "Detected fidelity_schema: 7" in result.stderr
     assert not (tmp_path / "build/build-was-called").exists()
 

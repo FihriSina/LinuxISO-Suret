@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -133,10 +134,10 @@ def verify_profile(profile: Path) -> VerificationResult:
         fidelity_schema = int(restore.get("fidelity_schema", 0) or 0)
     except (TypeError, ValueError):
         fidelity_schema = 0
-    if fidelity_schema < 10:
+    if fidelity_schema < 11:
         warnings.append(
-            "Profile predates first-login convergence fidelity capture v10; re-run 'linux-iso scan' before the next ISO build "
-            "to preserve source distro branding, Kickoff favorites/order, avatar, visible desktop launchers, and wallpaper fidelity."
+            "Profile predates SDDM/slideshow fidelity capture v11; re-run 'linux-iso scan' before the next ISO build "
+            "to preserve the selected login-screen theme/background and native Plasma slideshow behavior."
         )
     stats: dict[str, int | str] = {
         "asset_mode": restore.get("asset_mode", "legacy/all"),
@@ -330,6 +331,67 @@ def verify_profile(profile: Path) -> VerificationResult:
                         errors.append(
                             f"Strict-fidelity wallpaper reference was not made portable: {decoded}"
                         )
+
+    if fidelity_schema >= 11:
+        slideshow = restore.get("slideshow") or {}
+        if isinstance(slideshow, dict) and slideshow.get("active"):
+            slide_paths = slideshow.get("paths") or []
+            if not isinstance(slide_paths, list) or not slide_paths:
+                errors.append("Slideshow is active but no SlidePaths were captured.")
+            else:
+                image_count = 0
+                for raw in slide_paths:
+                    decoded = str(raw or "")
+                    candidate = _payload_path(profile, decoded, placeholder)
+                    if candidate is None or not candidate.exists():
+                        errors.append(f"Slideshow collection is missing from payload: {decoded}")
+                        continue
+                    if candidate.is_file():
+                        image_count += 1
+                    elif candidate.is_dir():
+                        image_count += sum(
+                            1
+                            for item in candidate.rglob("*")
+                            if item.is_file()
+                            and item.suffix.lower()
+                            in {".avif", ".bmp", ".gif", ".jpeg", ".jpg", ".jxl", ".png", ".svg", ".svgz", ".webp"}
+                        )
+                if image_count == 0:
+                    errors.append("Slideshow is active but the captured collections contain no images.")
+
+        visual_path = profile / "system-visual.json"
+        if visual_path.is_file():
+            try:
+                visual = json.loads(visual_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                visual = {}
+            sddm = visual.get("sddm") if isinstance(visual, dict) else {}
+            if isinstance(sddm, dict) and sddm.get("theme_captured"):
+                theme_root = profile / "payload/system/sddm/theme"
+                if not (theme_root / "Main.qml").is_file():
+                    errors.append("Captured SDDM theme is missing Main.qml.")
+                for rel in sddm.get("external_assets") or []:
+                    candidate = theme_root / str(rel)
+                    if not candidate.is_file():
+                        errors.append(f"Captured SDDM external asset is missing: {rel}")
+                if theme_root.is_dir():
+                    for config in theme_root.rglob("*"):
+                        if not config.is_file() or not (
+                            config.name.endswith(".conf") or ".conf." in config.name
+                        ):
+                            continue
+                        try:
+                            text = config.read_text(encoding="utf-8", errors="replace")
+                        except OSError:
+                            continue
+                        for line in text.splitlines():
+                            if "=" not in line or line.lstrip().startswith(("#", ";")):
+                                continue
+                            value = line.split("=", 1)[1].strip().strip('"').strip("'")
+                            if value.startswith(("/home/", "file:///home/", "{{HOME}}/")):
+                                errors.append(
+                                    f"SDDM theme still references a user-home asset: {config.name}: {value}"
+                                )
 
     # Report payload files that exist but are not described by the manifest. They
     # are not fatal, but reproducibility is weaker because checksums are missing.

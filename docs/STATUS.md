@@ -1,8 +1,33 @@
 # Current status
 
-**Current release: v0.6.0 - Android Studio Vendor Archive Resolution**
+**Current release: v0.6.2 - SDDM and Plasma Slideshow Fidelity**
 
-The Pardus Native path now has a second vetted application resolver class for proprietary Flatpak `extra-data` applications that cannot be deployed reliably by Pardus 25's Flatpak branch. Android Studio is the first resolver: its official Linux archive is hash-verified, safely extracted, and installed as a real application without adding a foreign distro repository.
+The Pardus Native path now preserves two visual states that previously diverged after a successful install: KDE Store SDDM login themes with user-selected external backgrounds, and Plasma slideshow desktops with their original collections/timing instead of a forced static first image.
+
+## v0.6.2 implemented
+
+- Fidelity schema v11 preserves `org.kde.slideshow`, `SlidePaths`, slideshow timing/order keys and the complete captured slide collection.
+- The initial visible slide can still seed `Image=`, but the wallpaper plugin is no longer converted to `org.kde.image`.
+- Runtime Plasma wallpaper state updates the active containment/plugin/path values without destroying slideshow mode.
+- SDDM configuration is read using real SDDM precedence: vendor drop-ins, `/etc/sddm.conf.d`, then `/etc/sddm.conf`.
+- Custom `ThemeDir` is honored.
+- KDE Store SDDM themes with `theme.conf.user` paths into the user's wallpaper folders are made self-contained under the captured theme's `suret-assets/` directory.
+- Only image assets are promoted from outside the SDDM theme; browser/profile/credential data remains excluded.
+- Theme-internal symlinks are dereferenced safely; links escaping the theme root are ignored.
+- Native restore strips only conflicting SDDM `[Theme]` keys from base configuration and installs a low-numbered Suret theme drop-in so later KDE System Settings changes can override it normally.
+- SDDM restore is fail-closed when a captured theme cannot be copied or lacks `Main.qml`; Native build exits instead of shipping a white/fallback login screen silently.
+- Old real profiles (`fidelity_schema < 11`) require one fresh capture. Retry mode detects this before deleting the previous Native work tree.
+- Native application-plan output now reports captured SDDM theme/external-asset count and slideshow collection count.
+- 243 regression tests pass.
+
+## v0.6.1 implemented
+
+- Native staging recovers Brave ownership from reversible launcher metadata already present in older profiles.
+- ChatGPT/WhatsApp-style web apps use Brave `--app=URL` instead of `xdg-open`, so Zen or another default browser cannot steal the launcher.
+- Brave APT installs use Brave Software's official keyring/source descriptor through a code-owned allow-list.
+- Browser profile/cookie/history/authentication state remains excluded.
+- Old `crx_<app-id>` window-class data is removed when app-id state is intentionally not copied.
+- Existing profiles do not require recapture.
 
 ## v0.6.0 implemented
 

@@ -42,6 +42,8 @@ v0.5.9 separates source-provider fidelity from portability fallback. Captured AP
 
 v0.6.0 adds a code-owned vendor-archive resolver for a narrower case: a genuinely captured Flatpak may use proprietary `extra-data` whose install-time sandbox is incompatible with the target distro's Flatpak branch. `com.google.AndroidStudio` is resolved through Android Developers rather than a foreign package repository. Suret accepts only exact Google download hosts, requires the published SHA-256, rejects unsafe tar members/links/privileged modes, installs under `/opt/android-studio`, and rewrites only the matching launcher. Large archive staging uses `/var/tmp`, not the private `/run` tmpfs. Applications without an explicit vetted resolver remain on their captured provider path and still fail closed if they cannot actually be installed.
 
+v0.6.2 raises visual fidelity to schema 11. Plasma slideshow containments retain their original `org.kde.slideshow` plugin, portable `SlidePaths`, interval/order configuration, and captured image directories; the current/most-recent slide is only an initial `Image=` seed. SDDM capture follows SDDM's actual configuration precedence and honors custom `ThemeDir`. User-selected login backgrounds referenced from `theme.conf.user` are copied into a self-contained theme bundle, while arbitrary files and external symlink targets remain excluded. Native restore removes only competing `[Theme]` keys from the base SDDM configuration, installs the captured theme as `suret-source`, and fails closed if the theme cannot be restored. Real profiles captured before schema 11 are not guessed/migrated automatically because older Suret versions intentionally flattened slideshows to static wallpapers.
+
 v0.5.4 treats appearance packages as mandatory fidelity dependencies and restores the captured profile to one primary local account only. Live target-user selection is volatile under `/run`; installed target selection is persisted under `/var/lib/linux-iso`. Profile verification rejects symlinks/special files and traversal destinations before root staging. Native output is produced atomically, boot metadata is compared against the base image, and the final ISO receives a SHA-256 checksum before QEMU validation.
 
 ## Secondary path: Generic Build Mode
@@ -71,3 +73,16 @@ The native adapter operates on the user's supplied ISO rather than reconstructin
 Capture may carry Generic Mode compatibility translations, but it also stores the source `Exec=` contract in reversible Suret metadata. The Native adapter removes that metadata and restores same-distro commands. Only browser/web launchers and explicitly mapped third-party vendor applications remain portable fallbacks. This keeps Pardus-native tools native while avoiding broken third-party favorites when the official ISO does not contain a user's external APT repository.
 
 v0.5.5 also treats Native acceptance safety guards as fail-closed predicates rather than command-status chains: safe non-overlapping layouts explicitly return success under Bash `set -e`, while unsafe overlaps exit with code 2. Acceptance scripts emit stage markers before long-running operations for deterministic fault localization.
+
+## Native browser-bound web apps (v0.6.1)
+
+Generic capture may normalize known web apps to `xdg-open URL` for portability,
+but the original launcher command is retained in reversible Suret metadata.
+Native staging consumes that metadata before generic launcher restoration. For
+Brave-owned web apps it preserves only the non-sensitive browser identity and
+URL, then renders a profile-independent `brave-browser --app=URL` launcher. The
+source browser profile, cookies, history, authentication data and app registry
+are deliberately not copied. If Brave was native, its official Debian channel
+is installed through a code-owned resolver; if Brave was actually Flatpak, that
+provider identity is retained.
+
