@@ -131,7 +131,7 @@ phase() {
 HERE=$(cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$HERE"
 
-echo "== Linux ISO - Suret v0.6.4 Native retry =="
+echo "== Linux ISO - Suret v0.6.5 Native retry =="
 echo "Base ISO: $BASE_ISO"
 echo "Profile:  $PROFILE"
 echo "Build:    $BUILD"

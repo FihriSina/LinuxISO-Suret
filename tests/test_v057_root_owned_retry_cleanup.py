@@ -74,9 +74,9 @@ def _probe() -> native.NativeIsoProbe:
 
 
 def test_v057_version_and_retry_banner_are_bumped():
-    assert __version__ == "0.6.4"
-    assert "v0.6.4 Native retry" in Path("scripts/retry-native-acceptance.sh").read_text(encoding="utf-8")
-    assert "v0.6.4 Native ISO acceptance" in Path("scripts/native-acceptance.sh").read_text(encoding="utf-8")
+    assert __version__ == "0.6.5"
+    assert "v0.6.5 Native retry" in Path("scripts/retry-native-acceptance.sh").read_text(encoding="utf-8")
+    assert "v0.6.5 Native ISO acceptance" in Path("scripts/native-acceptance.sh").read_text(encoding="utf-8")
 
 
 def test_v057_acceptance_reset_detaches_mounts_before_privileged_build_removal():

@@ -1,4 +1,4 @@
-# Next milestone - v0.6.4 Native Pardus full visual + performance acceptance
+# Next milestone - v0.6.5 Native Pardus software-center + full visual acceptance
 
 The next acceptance run validates the complete visual state now that the Native ISO boots, installs and reaches Plasma successfully.
 

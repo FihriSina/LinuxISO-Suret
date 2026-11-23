@@ -9,7 +9,7 @@ from linux_iso import __version__
 
 
 def test_v064_version():
-    assert __version__ == "0.6.4"
+    assert __version__ == "0.6.5"
 
 
 def test_v064_native_qemu_is_resource_adaptive_and_kvm_visible():

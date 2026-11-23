@@ -6,7 +6,7 @@
 
 ## Native ISO Mode (recommended)
 
-Suret v0.6.4 can remaster a user-supplied distro ISO instead of rebuilding the desktop on an Ubuntu/Kubuntu base. Pardus 25 live ISOs are the first build-capable adapter.
+Suret v0.6.5 can remaster a user-supplied distro ISO instead of rebuilding the desktop on an Ubuntu/Kubuntu base. Pardus 25 live ISOs are the first build-capable adapter.
 
 ```bash
 uv run linux-iso probe-iso ~/Downloads/Pardus-25.2-XFCE-amd64.iso
@@ -24,9 +24,9 @@ This preserves the existing verified profile and rebuilds only the native ISO pa
 A KDE profile on a Pardus XFCE ISO installs KDE inside Pardus, embeds the captured profile, installs source applications when resolvable, preserves the Pardus bootloader/installer/repositories, and repacks the ISO. Generic KIWI mode remains available through `stage-iso` / `build-iso`.
 
 
-## Current milestone: v0.6.4
+## Current milestone: v0.6.5
 
-### v0.6.4: responsive Native QEMU acceptance
+### v0.6.5: responsive Pardus software-center acceptance
 
 - Replaces the fixed 2 vCPU / 4 GiB Native QEMU profile with host-adaptive CPU and memory sizing, while keeping explicit environment overrides.
 - Makes KVM vs. TCG acceleration visible before the VM starts; a silent TCG fallback can no longer masquerade as a broken Plasma desktop.

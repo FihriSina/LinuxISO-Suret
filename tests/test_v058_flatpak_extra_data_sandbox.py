@@ -16,9 +16,9 @@ def _extract_function(script: str, name: str) -> str:
 
 
 def test_v058_version_and_acceptance_banners_are_bumped():
-    assert __version__ == "0.6.4"
-    assert "v0.6.4 Native retry" in Path("scripts/retry-native-acceptance.sh").read_text(encoding="utf-8")
-    assert "v0.6.4 Native ISO acceptance" in Path("scripts/native-acceptance.sh").read_text(encoding="utf-8")
+    assert __version__ == "0.6.5"
+    assert "v0.6.5 Native retry" in Path("scripts/retry-native-acceptance.sh").read_text(encoding="utf-8")
+    assert "v0.6.5 Native ISO acceptance" in Path("scripts/native-acceptance.sh").read_text(encoding="utf-8")
 
 
 def test_v058_chroot_root_is_a_real_slave_bind_mount_for_bubblewrap():

@@ -873,6 +873,29 @@ def qdbus_tool() -> str | None:
     return None
 
 
+def qemu_test_mode() -> bool:
+    for path in (Path("/sys/class/dmi/id/product_name"), Path("/sys/devices/virtual/dmi/id/product_name")):
+        try:
+            if path.read_text(encoding="utf-8", errors="replace").strip() == "Suret-QEMU-Test":
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def quiet_qemu_session() -> None:
+    if not qemu_test_mode():
+        return
+    # Keep fidelity settings intact, but suspend index/update helpers that can
+    # monopolize a small acceptance VM immediately after login. These actions
+    # are transient to the Suret-marked QEMU guest only.
+    for cmd in (["balooctl6", "suspend"], ["balooctl5", "suspend"]):
+        if shutil.which(cmd[0]):
+            run(cmd, timeout=10)
+    if shutil.which("pkill"):
+        run(["pkill", "-u", str(os.getuid()), "-f", "(^|/)pardus-update([[:space:]]|$)"], timeout=10)
+
+
 def apply_slideshow(data: dict[str, object], home: Path) -> bool:
     slideshow = data.get("slideshow") or {}
     if not isinstance(slideshow, dict) or not slideshow.get("active"):
@@ -967,6 +990,7 @@ def main() -> int:
 
     run(["kbuildsycoca6"])
     run(["kbuildsycoca5"])
+    quiet_qemu_session()
     apply_appearance(data)
     slideshow_ok = apply_slideshow(data, home)
     if not slideshow_ok:
@@ -1131,6 +1155,56 @@ def live_boot() -> bool:
         return False
 
 
+def qemu_test_mode() -> bool:
+    # test-native-qemu.sh marks its VM explicitly. Never change updater/startup
+    # behaviour on a physical installation or on an unrelated virtual machine.
+    for path in (Path("/sys/class/dmi/id/product_name"), Path("/sys/devices/virtual/dmi/id/product_name")):
+        try:
+            if path.read_text(encoding="utf-8", errors="replace").strip() == "Suret-QEMU-Test":
+                return True
+        except OSError:
+            pass
+    return False
+
+
+def quiet_qemu_autostart(home: Path, uid: int, gid: int) -> None:
+    if not qemu_test_mode():
+        return
+    source = Path("/etc/xdg/autostart")
+    if not source.is_dir():
+        return
+    config_root = home / ".config"
+    target = config_root / "autostart"
+    # Pre-login runs as root. Never follow a user-controlled symlink while
+    # creating QEMU-only autostart overrides.
+    if config_root.is_symlink() or target.is_symlink():
+        return
+    needles = (
+        "pardus-update",
+        "tr.org.pardus.update",
+        "package-update-indicator",
+        "discover-notifier",
+        "org.kde.discover.notifier",
+    )
+    for desktop in source.glob("*.desktop"):
+        try:
+            raw = desktop.read_text(encoding="utf-8", errors="replace").casefold()
+        except OSError:
+            continue
+        haystack = (desktop.name + "\n" + raw).casefold()
+        if not any(needle in haystack for needle in needles):
+            continue
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+            override = target / desktop.name
+            override.write_text("[Desktop Entry]\nHidden=true\n", encoding="utf-8")
+            os.chown(override, uid, gid, follow_symlinks=False)
+            os.chown(target, uid, gid, follow_symlinks=False)
+            _ensure_owned_parents(target.parent, home, uid, gid)
+        except OSError:
+            continue
+
+
 def target_user(marker: Path) -> pwd.struct_passwd | None:
     if marker.is_file():
         try:
@@ -1156,7 +1230,14 @@ def main() -> int:
         return 0
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(entry.pw_name + "\n", encoding="utf-8")
-    copy_profile(Path(entry.pw_dir), entry.pw_uid, entry.pw_gid, entry.pw_name, fingerprint)
+    home = Path(entry.pw_dir)
+    copy_profile(home, entry.pw_uid, entry.pw_gid, entry.pw_name, fingerprint)
+    # Suret's own QEMU acceptance VM is intentionally quiet at login: the
+    # Pardus updater and Discover notifier otherwise start expensive apt scans
+    # exactly while the user is testing the software center. Apply the override
+    # *after* profile restore so a captured autostart entry cannot overwrite it.
+    # The DMI scope means this never reaches physical installs.
+    quiet_qemu_autostart(home, entry.pw_uid, entry.pw_gid)
     return 0
 
 
@@ -2150,6 +2231,25 @@ if command -v apt-get >/dev/null 2>&1; then
   log "Refreshing native APT metadata"
   "${APT_GET[@]}" update
 
+  # Keep Pardus' own package-management frontends current inside the remaster.
+  # The stock ISO can be months older than the repository snapshot; older
+  # pardus-software / pardus-update builds have had apt/dpkg lock handling and
+  # KDE-session fixes upstream. Upgrade only packages already present in the
+  # base image, and only from the isolated official Pardus 25 repositories.
+  if [[ "$DISTRO_ID" == "pardus" ]]; then
+    package_ui_upgrades=()
+    for pkg in pardus-software pardus-update; do
+      if dpkg-query -W -f='${db:Status-Abbrev}' "$pkg" 2>/dev/null | grep -q '^ii' \
+        && "${APT_CACHE[@]}" show "$pkg" >/dev/null 2>&1; then
+        package_ui_upgrades+=("$pkg")
+      fi
+    done
+    if (( ${#package_ui_upgrades[@]} > 0 )); then
+      log "Refreshing Pardus package-management UI from official Pardus 25 repositories: ${package_ui_upgrades[*]}"
+      "${APT_GET[@]}" install -y --only-upgrade "${package_ui_upgrades[@]}"
+    fi
+  fi
+
   required_desktop_pkgs=(__REQUIRED_DESKTOP_PACKAGES__)
   optional_desktop_pkgs=(__OPTIONAL_DESKTOP_PACKAGES__)
   missing_required=()
@@ -2688,6 +2788,7 @@ do
 done
 
 args=(-machine q35 "${ACCEL[@]}" -m "$QEMU_MEMORY" -smp "$QEMU_CPUS" -boot once=d,menu=on \
+  -smbios type=1,manufacturer=Suret,product=Suret-QEMU-Test,version=0.6.5 \
   -drive "file=$DISK,format=qcow2,if=virtio,cache=writeback,aio=threads,discard=unmap" \
   -cdrom "$ISO" -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
   -device virtio-vga -device virtio-rng-pci -display gtk,gl=off \

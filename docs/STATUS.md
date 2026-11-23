@@ -1,6 +1,6 @@
 # Current status
 
-**Current release: v0.6.4 - Native QEMU Performance Hardening**
+**Current release: v0.6.5 - Pardus Software Center Contention Hardening**
 
 The Native image fidelity work from v0.6.3 is unchanged. v0.6.4 focuses on the acceptance VM itself so a slow QEMU fallback is not confused with a broken ISO.
 

@@ -71,7 +71,7 @@ def _manifest(schema: int, *, icon: str = "Tela-manjaro-dark") -> dict:
         "restore": {
             "home_placeholder": "{{HOME}}",
             "payload_root": "payload/home",
-            "profile_version": "0.6.4",
+            "profile_version": "0.6.5",
             "asset_mode": "active",
             "fidelity_schema": schema,
             "slideshow": {
@@ -281,11 +281,11 @@ def test_v063_verification_rejects_truncated_active_icon_theme_bundle(tmp_path: 
 
 
 def test_v063_release_identity_and_retry_gate():
-    assert __version__ == "0.6.4"
+    assert __version__ == "0.6.5"
     retry = Path("scripts/retry-native-acceptance.sh").read_text(encoding="utf-8")
     full = Path("scripts/native-acceptance.sh").read_text(encoding="utf-8")
-    assert "v0.6.4 Native retry" in retry
-    assert "v0.6.4 Native ISO acceptance" in full
+    assert "v0.6.5 Native retry" in retry
+    assert "v0.6.5 Native ISO acceptance" in full
     assert "fidelity < 12" in retry
     assert retry.index("fidelity < 12") < retry.index('phase "Resetting previous Native build state"')
     assert "Active icon theme" in retry
